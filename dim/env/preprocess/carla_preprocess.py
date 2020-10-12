@@ -352,7 +352,7 @@ class StreamingCARLALoader:
         feed_dict[phi.S_past_world_frame] = pasts_batch                
         feed_dict[phi.yaws] = yaws
         feed_dict[phi.agent_presence] = agent_presence
-        feed_dict[phi.is_training] = np.array(False)
+        # feed_dict[phi.is_training] = np.array(False)
 
         # Feed the BEV features.
         if with_bev:

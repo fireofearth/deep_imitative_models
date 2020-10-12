@@ -1,0 +1,4 @@
+server:
+  client_timeout: 1000
+  host: localhost
+  port: 2000

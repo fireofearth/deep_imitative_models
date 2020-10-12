@@ -24,7 +24,7 @@ hydra:
         level: DEBUG
   run:
     #  dir: /home/nrhinehart/data/dim_release_results/${now:%Y-%m}/${now:%m-%d-%H-%M-%S}
-    dir: dim_release_results/${now:%Y-%m}/${now:%m-%d-%H-%M-%S}    
+    dir: /home/gutturale/code/data/dim_release_results/${now:%Y-%m}/${now:%m-%d-%H-%M-%S}    
 
 experiment:
   seed: 48

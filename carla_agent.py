@@ -242,9 +242,9 @@ def run_carla_client(cfg, server_log_fn):
             settings_carla.lidar_params['val_obstacle'] = 1.
 
         # Build the object that will process data and create feed_dicts for R2P2 forecasting.
-        streaming_loader = preproc.StreamingCARLALoader(settings=settings_carla, T_past=T_past, T=T,
+        streaming_loader = preproc.StreamingCARLALoader(settings=settings_carla, T_past=T_past, T=T)#,
                                                         # TODO assumes model config
-                                                        with_sdt=model_config['dataset']['params']['sdt_bev'])
+                                                        # with_sdt=model_config['dataset']['params']['sdt_bev'])
         
         # Manage the things we plot.
         plottable_manager = cplot.PlottableManager(plotconf)
@@ -301,7 +301,7 @@ def postprocess_cfg(cfg):
         if cfgexp.scene == 'Town02': assert(cfgexp.n_vehicles == 20)
         elif cfgexp.scene == 'Town01': assert(cfgexp.n_vehicles == 50)
         else: pass
-            
+    
     if len(cfgexp.specific_episodes) > 0:
         # Ensure we'll actually get to run
         if cfgexp.n_episodes < max(cfgexp.specific_episodes) - 1:
