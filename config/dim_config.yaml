@@ -110,7 +110,8 @@ data:
   # For data saving.
   shapes:
     B: 1
-    A: 1
+    # A: 1
+    A: 5
     T_past: 3
     T: 20
     H: 100

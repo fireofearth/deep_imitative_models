@@ -71,24 +71,28 @@ def print_1(data):
     print("overhead_features shape", overhead_features)
 
 def test_1():
-    data_dir = "/home/gutturale/code/data/dim_release_results/2020-10/10-12-14-34-01/episode_000000/dim_feeds"
+    data_dir = "/home/gutturale/code/data/precog_carla_dataset/town01/train"
     data_file_wildcard = os.path.join(data_dir, "ma_*.json")
     data_file_paths = glob.glob(data_file_wildcard)
     data_file_path = data_file_paths[1]
     print("reading", data_file_path)
     data = load_json(data_file_path)
+    print_1(data)
 
 def print_2(data):
     print(data.keys())
     S_past_world_frame = data["S_past_world_frame"]
     S_future_world_frame = data["S_future_world_frame"]
     yaws = data["yaws"]
-    agent_presence = ["agent_presence"]
+    agent_presence = data["agent_presence"]
+    light_strings = data["light_strings"]
     print("S_past_world_frame shape", S_past_world_frame.shape)
     print("S_future_world_frame shape", S_future_world_frame.shape)
     print("yaws shape", yaws.shape)
     print("yaws", yaws)
-    # dict_keys(['S_past_world_frame', 'yaws', 'agent_presence', 'overhead_features', 'light_strings', 'S_future_world_frame'])
+    print("light_strings", light_strings)
+    # dict_keys(['S_past_world_frame', 'yaws', 'agent_presence',
+    #   'overhead_features', 'light_strings', 'S_future_world_frame'])
 
 def test_2():
     data_dir = "/home/gutturale/code/data/dim_release_results/2020-10/10-12-14-34-01/episode_000000/dim_feeds"
@@ -100,4 +104,5 @@ def test_2():
         data = load_json(data_file_path)
         print_2(data)
 
+# test_1()
 test_2()

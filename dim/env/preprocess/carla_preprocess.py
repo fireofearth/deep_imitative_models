@@ -343,11 +343,13 @@ class StreamingCARLALoader:
 
         # Combine ego and other pasts.
         pasts_joint = np.concatenate((pasts, pasts_other))[:A][None]
+        print("pasts_joint.shape", pasts_joint.shape) # (1, 1, 3, 2)
         
         # Tile pasts.
         pasts_batch = np.tile(pasts_joint, (B, 1, 1, 1))
 
         yaws = np.tile(np.asarray(observations.yaws_local[:A])[None], (B, 1))
+        # print("yaws.shape", yaws.shape, "yaws", yaws)
 
         feed_dict[phi.S_past_world_frame] = pasts_batch                
         feed_dict[phi.yaws] = yaws

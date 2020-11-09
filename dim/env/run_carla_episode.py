@@ -282,7 +282,7 @@ def run_episode(client,
         if have_control and mainconf.pilot not in ('auto', 'user', 'zero'):
             prune_nearby = current_obs.is_turning and waypointerconf.drop_near_on_turn
             if stuck or prune_nearby:
-                log.warning("Vehicle is stuck or turning, preparing to adjust goal likelihood")                
+                log.warning("Vehicle is stuck or turning, preparing to adjust goal likelihood")
                 waypoints_control = waypointer.get_unsticking_waypoints(waypoints_control, midlow_controller, current_obs)
             if mainconf.save_dim_feeds:
                 fn = "{}/feed_{:08d}.json".format(dim_feeds_dir, frame)
