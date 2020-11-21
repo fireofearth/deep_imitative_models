@@ -71,7 +71,7 @@ def print_1(data):
     print("overhead_features shape", overhead_features)
 
 def test_1():
-    data_dir = "/home/gutturale/code/data/precog_carla_dataset/town01/train"
+    data_dir = "/home/fireofearth/code/data/precog_carla_dataset/town01/train"
     data_file_wildcard = os.path.join(data_dir, "ma_*.json")
     data_file_paths = glob.glob(data_file_wildcard)
     data_file_path = data_file_paths[1]
@@ -95,7 +95,7 @@ def print_2(data):
     #   'overhead_features', 'light_strings', 'S_future_world_frame'])
 
 def test_2():
-    data_dir = "/home/gutturale/code/data/dim_release_results/2020-10/10-12-14-34-01/episode_000000/dim_feeds"
+    data_dir = "/home/fireofearth/code/data/dim_release_results/2020-10/10-12-14-34-01/episode_000000/dim_feeds"
     data_file_wildcard = os.path.join(data_dir, "feed_*.json")
     data_file_paths = glob.glob(data_file_wildcard)
     for idx in range(0,10):

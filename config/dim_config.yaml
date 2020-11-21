@@ -24,7 +24,7 @@ hydra:
         level: DEBUG
   run:
     #  dir: /home/nrhinehart/data/dim_release_results/${now:%Y-%m}/${now:%m-%d-%H-%M-%S}
-    dir: /home/gutturale/code/data/dim_release_results/${now:%Y-%m}/${now:%m-%d-%H-%M-%S}    
+    dir: /home/fireofearth/code/data/dim_release_results/${now:%Y-%m}/${now:%m-%d-%H-%M-%S}    
 
 experiment:
   seed: 48
@@ -110,8 +110,8 @@ data:
   # For data saving.
   shapes:
     B: 1
-    # A: 1
-    A: 5
+    A: 1
+    # A: 5
     T_past: 3
     T: 20
     H: 100
@@ -170,7 +170,6 @@ plotting:
 
   past:
     marker: 'x'
-    alpha: 0.0
     linewidth: 0
     alpha: 0.5
 

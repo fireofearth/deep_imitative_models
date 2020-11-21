@@ -303,7 +303,8 @@ class StreamingCARLALoader:
         # Get feed dict and transform from an earlier frame
         fd, tform = self.feed_dicts_and_transforms[earlier_frame]
         # These are the past positions with the most recent one occuring at the current frame. 
-        player_future_local = tform.transform_points(observations.player_positions_world)[1:self.T+1, :2][None, None]
+        player_future_local = tform.transform_points(
+                observations.player_positions_world)[1:self.T+1, :2][None, None]
         # TODO create for other agents too... assumes A=1.
         # other_future_local = tform.transform_points(observations.agent_positions_world)
         fd[S_future_world_frame] = player_future_local
@@ -343,7 +344,7 @@ class StreamingCARLALoader:
 
         # Combine ego and other pasts.
         pasts_joint = np.concatenate((pasts, pasts_other))[:A][None]
-        print("pasts_joint.shape", pasts_joint.shape) # (1, 1, 3, 2)
+        # print("pasts_joint.shape", pasts_joint.shape) # (1, 1, 3, 2)
         
         # Tile pasts.
         pasts_batch = np.tile(pasts_joint, (B, 1, 1, 1))
@@ -354,7 +355,7 @@ class StreamingCARLALoader:
         feed_dict[phi.S_past_world_frame] = pasts_batch                
         feed_dict[phi.yaws] = yaws
         feed_dict[phi.agent_presence] = agent_presence
-        # feed_dict[phi.is_training] = np.array(False)
+        feed_dict[phi.is_training] = np.array(False)
 
         # Feed the BEV features.
         if with_bev:
@@ -419,7 +420,18 @@ def dict_to_json(dict_datum, out_fn, b=0):
     """
     assert(not os.path.isfile(out_fn))
     # Assume that the input dict has keys with .name attributes (e.g. tf.Tensors)
-    preproc_dict = {k.name.split(':')[0]: np.squeeze(v[b]) for k, v in dict_datum.items()}
+    ################################################
+    ## fix
+    preproc_dict = {}
+    for k, v in dict_datum.items():
+        print(k.name.split(':')[0])
+        k = k.name.split(':')[0]
+        try:
+            preproc_dict[k] = np.squeeze(v[b])
+        except:
+            pass
+    ################################################
+    # preproc_dict = {k.name.split(':')[0]: np.squeeze(v[b]) for k, v in dict_datum.items()}
     with open(out_fn, 'w') as f:
         json.dump(preproc_dict, f, cls=NumpyEncoder)
     return out_fn

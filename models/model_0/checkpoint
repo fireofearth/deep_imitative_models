@@ -1,2 +1,2 @@
-model_checkpoint_path: "/home/gutturale/code/robotics/deep_imitative_models/models/model_0/esp-model-100000"
-all_model_checkpoint_paths: "/home/gutturale/code/robotics/deep_imitative_models/models/model_0/esp-model-100000"
+model_checkpoint_path: "/home/fireofearth/code/robotics/deep_imitative_models/models/model_0/esp-model-100000"
+all_model_checkpoint_paths: "/home/fireofearth/code/robotics/deep_imitative_models/models/model_0/esp-model-100000"
