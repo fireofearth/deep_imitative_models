@@ -110,12 +110,15 @@ data:
   # For data saving.
   shapes:
     B: 1
-    A: 1
-    # A: 5
-    T_past: 3
+    # A: 1
+    A: 5
+    # T_past: 3
+    T_past: 10
     T: 20
-    H: 100
-    W: 100
+    # H: 100
+    # W: 100
+    H: 200
+    W: 200
     C: 4
     D: 2
   # TODO some are deprecated

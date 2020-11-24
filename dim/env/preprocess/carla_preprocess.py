@@ -303,12 +303,70 @@ class StreamingCARLALoader:
         # Get feed dict and transform from an earlier frame
         fd, tform = self.feed_dicts_and_transforms[earlier_frame]
         # These are the past positions with the most recent one occuring at the current frame. 
-        player_future_local = tform.transform_points(
-                observations.player_positions_world)[1:self.T+1, :2][None, None]
+        player_future_local = tform.transform_points(observations.player_positions_world)[1:self.T+1, :2][None, None]
         # TODO create for other agents too... assumes A=1.
         # other_future_local = tform.transform_points(observations.agent_positions_world)
         fd[S_future_world_frame] = player_future_local
         return fd
+
+    def save_dataset_sample(self, phi, episode_params, observations,
+            S_future_world_frame, frame, filename):
+        """Get dataset sample to train ESP network
+
+        reading /home/gutturale/code/data/precog_carla_dataset/town02/test/ma_datum_00003828.json
+        dict_keys(['lidar_params', 'agent_pasts', 'agent_futures', 'agent_transforms',
+                'overhead_features', 'episode',
+                'player_past', 'frame', 'player_future', 'player_transform'])
+        player_future shape (20, 3)
+        agent_futures shape (4, 20, 3)
+        player_past shape (10, 3)
+        agent_pasts shape (4, 10, 3)
+        overhead_features shape (200, 200, 4)
+        """
+        _, _, T, _ = tensoru.shape(phi.S_past_world_frame)
+        B, A, T_past, D = tensoru.shape(S_future_world_frame)
+        assert(B == 1)
+        assert(A >= 2)
+        earlier_frame = frame - self.T
+        assert(earlier_frame > 0)
+        datum = {}
+        feed_dict, tform = self.feed_dicts_and_transforms[earlier_frame]
+        # player_transform is current_obs.inv_tform_t ?
+
+        # observations.player_positions_world is a ndarray of shape (21, 3)
+        player_future = tform.transform_points(
+                observations.player_positions_world)[1:self.T+1, :2]
+        datum['player_future'] = player_future
+
+        # observations.agent_positions_world is a ndarray of shape (4, 21, 3)
+        agent_futures = np.array([tform.transform_points(x)
+                for x in observations.agent_positions_world])[:, 1:self.T+1, :2]
+        datum['agent_futures'] = agent_futures
+        
+        joint_past_local = np.squeeze(feed_dict[phi.S_past_world_frame])
+        player_past = joint_past_local[0]
+        datum['player_past'] = player_past
+        agent_pasts = joint_past_local[1:A]
+        datum['agent_pasts'] = agent_pasts
+
+        joint_yaws = np.squeeze(feed_dict[phi.yaws])
+        player_yaw = joint_yaws[0]
+        datum['player_yaw'] = player_yaw
+        agent_yaws = joint_yaws[1:A]
+        datum['agent_yaws'] = agent_yaws
+
+        datum['frame'] = frame
+        datum['episode'] = episode_params.episode
+        overhead_features = np.squeeze(feed_dict[phi.overhead_features])
+        datum['overhead_features'] = overhead_features
+        datum['lidar_params'] = episode_params.settings.lidar_params
+        light_strings = np.squeeze(feed_dict[phi.light_strings])
+        datum['light_strings'] = light_strings
+        
+        assert(not os.path.isfile(filename))
+        with open(filename, 'w') as f:
+            json.dump(datum, f, cls=NumpyEncoder)
+
         
     def populate_phi_feeds(self,
                            phi,
@@ -424,7 +482,6 @@ def dict_to_json(dict_datum, out_fn, b=0):
     ## fix
     preproc_dict = {}
     for k, v in dict_datum.items():
-        print(k.name.split(':')[0])
         k = k.name.split(':')[0]
         try:
             preproc_dict[k] = np.squeeze(v[b])

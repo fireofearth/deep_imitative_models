@@ -261,7 +261,8 @@ def run_episode(client,
 
         # Get the feed_dict for this frame to build features / plottables.
         # TODO should be T_past, not 3.
-        if frame > 3:
+        # if frame > 3:
+        if frame > dataconf.shapes.T_past:
             fd = streaming_loader.populate_phi_feeds(
                 phi=phi,
                 sensor_data=sensor_data,
@@ -271,11 +272,17 @@ def run_episode(client,
                 observations=current_obs,
                 frame=frame)
             if have_control and dataconf.save_data:
-                fd_previous = streaming_loader.populate_expert_feeds(current_obs, future, frame)
+                # fd_previous = streaming_loader.populate_expert_feeds(current_obs, future, frame)
+                # if frame % dataconf.save_period_frames == 0:
+                #     fn = "{}/feed_{:08d}.json".format(dim_feeds_dir, frame)
+                #     log.debug("Saving feed to '{}'".format(fn))
+                #     preproc.dict_to_json(fd_previous, fn)
                 if frame % dataconf.save_period_frames == 0:
-                    fn = "{}/feed_{:08d}.json".format(dim_feeds_dir, frame)
+                    fn = "{}/feed_ep{:06d}_fr{:08d}.json".format(dim_feeds_dir,
+                            episode_params.episode, frame)
                     log.debug("Saving feed to '{}'".format(fn))
-                    preproc.dict_to_json(fd_previous, fn)
+                    streaming_loader.save_dataset_sample(phi, episode_params,
+                            current_obs, future, frame, fn)
                 streaming_loader.prune_old(frame)
                     
         # If we have a non-autopilot controller, and enough frames                 
@@ -320,7 +327,8 @@ def run_episode(client,
         client.send_control(control)
         waypointerconf.have_planned = have_control
 
-        if plotconf.plot and frame > 3:
+        # if plotconf.plot and frame > 3:
+        if plotconf.plot and frame > dataconf.shapes.T_past:
             plot_data = cplot.GenericPerFramePlottingData(
                 pilot=mainconf.pilot,
                 hires=plotconf.hires_plot,
