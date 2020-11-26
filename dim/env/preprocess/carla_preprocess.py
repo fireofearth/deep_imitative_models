@@ -206,10 +206,11 @@ class PlayerObservations:
         if waypointer is not None:
             # Get the light state from the most recent measurement.
             self.traffic_light_state, self.traffic_light_data = waypointer.get_upcoming_traffic_light(measurements[-1], sensor_data=None)
+            self.player_destination_world = waypointer.goal_position
         else:
-            log.warning("Not recording traffic light state in observation!")
+            log.debug("Not recording traffic light state in observation!")
+            self.player_destination_world = None
 
-        self.player_destination_world = waypointer.goal_position
         
         if self.player_destination_world is not None:
             self.player_destination_local = self.inv_tform_t.transform_points(self.player_destination_world[None])[0]
@@ -297,6 +298,7 @@ class StreamingCARLALoader:
         :rtype: 
 
         """
+        raise RuntimeError('Not using populate_expert_feeds')
         earlier_frame = frame - self.T
         assert(earlier_frame > 0)
         
@@ -330,9 +332,11 @@ class StreamingCARLALoader:
         earlier_frame = frame - self.T
         assert(earlier_frame > 0)
         datum = {}
-        feed_dict, tform = self.feed_dicts_and_transforms[earlier_frame]
+        feed_dict, tform, agent_id_ordering = self.feed_dicts_and_transforms[earlier_frame]
         # player_transform is current_obs.inv_tform_t ?
 
+        observations  = observations.copy_with_new_ordering(agent_id_ordering)
+        
         # observations.player_positions_world is a ndarray of shape (21, 3)
         player_future = tform.transform_points(
                 observations.player_positions_world)[1:self.T+1, :2]
@@ -387,7 +391,9 @@ class StreamingCARLALoader:
         assert(measurement_buffer.maxlen > self.T)
         feed_dict = tfutil.FeedDict()
         # Store these feeds for potential later expert population.
-        self.feed_dicts_and_transforms[frame] = (feed_dict, observations.inv_tform_t)
+        self.feed_dicts_and_transforms[frame] = (feed_dict,
+                observations.inv_tform_t, observations.agent_id_ordering)
+
         B, H, W, C = tensoru.shape(phi.overhead_features)
         _, A = tensoru.shape(phi.yaws)
             

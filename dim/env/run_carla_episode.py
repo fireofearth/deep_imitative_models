@@ -364,7 +364,7 @@ def run_episode(client,
                 #     A=A_past, waypointer=waypointer, frame=frame)
 
                 if frame % dataconf.save_period_frames == 0:
-                    fn = "{}/feed_ep{:06d}_fr{:08d}.json".format(dim_feeds_dir,
+                    fn = "{}/ma_ep{:06d}_fr{:08d}.json".format(dim_feeds_dir,
                             episode_params.episode, frame)
                     log.info("Saving feed to '{}'".format(fn))
                     streaming_loader.save_dataset_sample(phi, episode_params,
