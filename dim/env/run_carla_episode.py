@@ -8,9 +8,10 @@ import os
 import pdb
 import random
 import time
+import math
 
 import carla.transform as transform
-
+from carla.planner.map import CarlaMap
 import precog.utils.np_util as npu
 
 import dim.env.plot.carla_plot as cplot
@@ -20,6 +21,81 @@ import dim.plan.autopilot_controller as autopilot_controller
 from dim.plan.waypointer import Waypointer
 
 log = logging.getLogger(os.path.basename(__file__))
+
+def view_start_positions(scene):
+    """Debugging function to show all the starting positions and the intersections. 
+    """
+    p = "/home/fireofearth/code/src/carla-0.8.4/PythonClient/carla/planner"
+    import matplotlib.image as mpimg
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Circle
+    d = 30
+    image = mpimg.imread(f"{p}/{scene.map_name}.png")
+    carla_map = CarlaMap(scene.map_name, 0.1653, 50)
+    fig, ax = plt.subplots(1)
+    ax.imshow(image)
+    positions = [scene.player_start_spots[pos]
+            for pos in range(len(scene.player_start_spots))]
+    for intersection in carla_map.get_intersection_nodes():
+        pixel = carla_map.convert_to_pixel(intersection)
+        spot = Circle((pixel[0], pixel[1]), 12, color='b')
+        ax.add_patch(spot)
+
+    # calculate starting positions near intersections
+    # get world coordinates of each bounding box
+    intersections = [carla_map.convert_to_world(nd)
+            for nd in carla_map.get_intersection_nodes()]
+    for position in positions:
+        flag = False
+        for intersect in intersections:
+            px = position.location.x
+            py = position.location.y
+            ix = intersect[0]
+            iy = intersect[1]
+            if d >= math.sqrt((px - ix)**2 + (py - iy)**2):
+                flag = True
+                break
+        pixel = carla_map.convert_to_pixel([
+            position.location.x,
+            position.location.y,
+            position.location.z])
+        if flag:
+            spot = Circle((pixel[0], pixel[1]), 12, color='g')
+            ax.add_patch(spot)
+        else:
+            spot = Circle((pixel[0], pixel[1]), 12, color='r')
+            ax.add_patch(spot)
+
+    plt.show()
+    raise Exception("DEBUGGING")
+
+def choose_start_near_intersection(scene):
+    """Generates the starting position of ego vehicle near intersections.
+    """
+    d = 30
+    carla_map = CarlaMap(scene.map_name, 0.1653, 50)
+    position_indices = range(len(scene.player_start_spots))
+    intersections = [carla_map.convert_to_world(nd)
+            for nd in carla_map.get_intersection_nodes()]
+    def is_near_intersection(position_idx):
+        position = scene.player_start_spots[position_idx]
+        for intersect in intersections:
+            px = position.location.x
+            py = position.location.y
+            ix = intersect[0]
+            iy = intersect[1]
+            if d >= math.sqrt((px - ix)**2 + (py - iy)**2):
+                return True
+        return False
+    position_indices = list(filter(is_near_intersection, position_indices))
+    if len(position_indices) == 0:
+        raise RuntimeError("No starting positions near intersections")
+    c = random.choice(position_indices)
+    position = scene.player_start_spots[c]
+    px = position.location.x
+    py = position.location.y
+    log.debug(f"Starting at {c}, coordinate ({px}, {py}) (out of {len(position_indices)} possible positions)")
+    return c
 
 def run_episode(client,
                 streaming_loader,
@@ -70,10 +146,14 @@ def run_episode(client,
     # Hang out?
     time.sleep(0.01)
 
+    # create a map of starting positions.
+    # view_start_positions(scene)
+
     # Notify the server that we want to start the episode at the
     # player_start index. This function blocks until the server is ready
     # to start the episode.
-    client.start_episode(choose_player_start(scene))
+    # client.start_episode(choose_player_start(scene))
+    client.start_episode(choose_start_near_intersection(scene))
 
     have_specific_episodes = len(expconf.specific_episodes) > 0
     if not have_specific_episodes:
@@ -277,10 +357,16 @@ def run_episode(client,
                 #     fn = "{}/feed_{:08d}.json".format(dim_feeds_dir, frame)
                 #     log.debug("Saving feed to '{}'".format(fn))
                 #     preproc.dict_to_json(fd_previous, fn)
+
+                # TODO: generate dataset past and future of matching vehicles
+                # current_obs = preproc.PlayerObservations(
+                #     measurement_buffer, t_index=-1, radius=200,
+                #     A=A_past, waypointer=waypointer, frame=frame)
+
                 if frame % dataconf.save_period_frames == 0:
                     fn = "{}/feed_ep{:06d}_fr{:08d}.json".format(dim_feeds_dir,
                             episode_params.episode, frame)
-                    log.debug("Saving feed to '{}'".format(fn))
+                    log.info("Saving feed to '{}'".format(fn))
                     streaming_loader.save_dataset_sample(phi, episode_params,
                             current_obs, future, frame, fn)
                 streaming_loader.prune_old(frame)

@@ -35,7 +35,8 @@ experiment:
   skip_to: 0
   n_episodes_run: 0
   specific_episodes: []
-  frames_per_episode: 5000
+  # frames_per_episode: 5000
+  frames_per_episode: 600
   rstr: ''
   record_google_sheets: True
   min_takeover_frames: 50
