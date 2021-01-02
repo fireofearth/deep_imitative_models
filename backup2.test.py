@@ -21,51 +21,25 @@ import random
 import re
 import sys
 import weakref
-import time
-import numpy as np
 
-import pygame
-from pygame.locals import KMOD_CTRL
-from pygame.locals import KMOD_SHIFT
-from pygame.locals import K_0
-from pygame.locals import K_9
-from pygame.locals import K_BACKQUOTE
-from pygame.locals import K_BACKSPACE
-from pygame.locals import K_COMMA
-from pygame.locals import K_DOWN
-from pygame.locals import K_ESCAPE
-from pygame.locals import K_F1
-from pygame.locals import K_LEFT
-from pygame.locals import K_PERIOD
-from pygame.locals import K_RIGHT
-from pygame.locals import K_SLASH
-from pygame.locals import K_SPACE
-from pygame.locals import K_TAB
-from pygame.locals import K_UP
-from pygame.locals import K_a
-from pygame.locals import K_b
-from pygame.locals import K_c
-from pygame.locals import K_d
-from pygame.locals import K_g
-from pygame.locals import K_h
-from pygame.locals import K_i
-from pygame.locals import K_l
-from pygame.locals import K_m
-from pygame.locals import K_n
-from pygame.locals import K_p
-from pygame.locals import K_q
-from pygame.locals import K_r
-from pygame.locals import K_s
-from pygame.locals import K_v
-from pygame.locals import K_w
-from pygame.locals import K_x
-from pygame.locals import K_z
-from pygame.locals import K_MINUS
-from pygame.locals import K_EQUALS
+try:
+    import pygame
+    from pygame.locals import KMOD_CTRL
+    from pygame.locals import K_ESCAPE
+    from pygame.locals import K_q
+except ImportError:
+    raise RuntimeError('cannot import pygame, make sure pygame package is installed')
+
+try:
+    import numpy as np
+except ImportError:
+    raise RuntimeError(
+        'cannot import numpy, make sure numpy package is installed')
 
 # ==============================================================================
 # -- Find CARLA module ---------------------------------------------------------
 # ==============================================================================
+
 
 # ==============================================================================
 # -- Add PythonAPI for release mode --------------------------------------------
@@ -78,7 +52,6 @@ sys.path.append(
 
 import carla
 from carla import ColorConverter as cc
-from carla import VehicleLightState as vls
 
 from agents.navigation.behavior_agent import BehaviorAgent  # pylint: disable=import-error
 from agents.navigation.roaming_agent import RoamingAgent  # pylint: disable=import-error
@@ -219,44 +192,23 @@ class World(object):
 # -- KeyboardControl -----------------------------------------------------------
 # ==============================================================================
 
+
 class KeyboardControl(object):
     def __init__(self, world):
         world.hud.notification("Press 'H' or '?' for help.", seconds=4.0)
 
-    @staticmethod
-    def _is_quit_shortcut(key):
-        """Shortcut for quitting"""
-        return (key == K_ESCAPE) or (key == K_q and pygame.key.get_mods() & KMOD_CTRL)
-
-    def parse_events(self, client, world, clock):
+    def parse_events(self):
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 return True
             if event.type == pygame.KEYUP:
                 if self._is_quit_shortcut(event.key):
                     return True
-                # from manual_control.py
-                elif event.key == K_BACKSPACE:
-                    if self._autopilot_enabled:
-                        world.player.set_autopilot(False)
-                        world.restart()
-                        world.player.set_autopilot(True)
-                    else:
-                        world.restart()
-                elif event.key == K_F1:
-                    world.hud.toggle_info()
-                elif event.key == K_TAB:
-                    world.camera_manager.toggle_camera()
-                elif event.key == K_c and pygame.key.get_mods() & KMOD_SHIFT:
-                    world.next_weather(reverse=True)
-                elif event.key == K_c:
-                    world.next_weather()
-                elif event.key == K_BACKQUOTE:
-                    world.camera_manager.next_sensor()
-                elif event.key == K_n:
-                    world.camera_manager.next_sensor()
-                elif event.key > K_0 and event.key <= K_9:
-                    world.camera_manager.set_sensor(event.key - 1 - K_0)
+
+    @staticmethod
+    def _is_quit_shortcut(key):
+        """Shortcut for quitting"""
+        return (key == K_ESCAPE) or (key == K_q and pygame.key.get_mods() & KMOD_CTRL)
 
 # ==============================================================================
 # -- HUD -----------------------------------------------------------------------
@@ -708,167 +660,6 @@ class CameraManager(object):
 # -- Game Loop ---------------------------------------------------------
 # ==============================================================================
 
-def create_npcs(client, args):
-    vehicles_list = []
-    walkers_list = []
-    all_id = []
-    client = carla.Client(args.host, args.port)
-    client.set_timeout(10.0)
-    synchronous_master = False
-    np.random.seed(args.seed if args.seed is not None else int(time.time()))
-
-    # spawn_npc.py try block BEGIN
-    world = client.get_world()
-    traffic_manager = client.get_trafficmanager(8000)
-    traffic_manager.set_global_distance_to_leading_vehicle(1.0)
-    if args.hybrid:
-        traffic_manager.set_hybrid_physics_mode(True)
-    if args.seed is not None:
-        traffic_manager.set_random_device_seed(args.seed)
-    # always sync
-
-    blueprints = world.get_blueprint_library().filter(args.filterv)
-    blueprintsWalkers = world.get_blueprint_library().filter(args.filterw)
-
-    if args.safe:
-        blueprints = [x for x in blueprints if int(x.get_attribute('number_of_wheels')) == 4]
-        blueprints = [x for x in blueprints if not x.id.endswith('isetta')]
-        blueprints = [x for x in blueprints if not x.id.endswith('carlacola')]
-        blueprints = [x for x in blueprints if not x.id.endswith('cybertruck')]
-        blueprints = [x for x in blueprints if not x.id.endswith('t2')]
-
-    blueprints = sorted(blueprints, key=lambda bp: bp.id)
-
-    spawn_points = world.get_map().get_spawn_points()
-    number_of_spawn_points = len(spawn_points)
-
-    if args.number_of_vehicles < number_of_spawn_points:
-        np.random.shuffle(spawn_points)
-    elif args.number_of_vehicles > number_of_spawn_points:
-        msg = 'requested %d vehicles, but could only find %d spawn points'
-        logging.warning(msg, args.number_of_vehicles, number_of_spawn_points)
-        args.number_of_vehicles = number_of_spawn_points
-
-    # @todo cannot import these directly.
-    SpawnActor = carla.command.SpawnActor
-    SetAutopilot = carla.command.SetAutopilot
-    SetVehicleLightState = carla.command.SetVehicleLightState
-    FutureActor = carla.command.FutureActor
-
-    # --------------
-    # Spawn vehicles
-    # --------------
-    batch = []
-    for n, transform in enumerate(spawn_points):
-        if n >= args.number_of_vehicles:
-            break
-        blueprint = np.random.choice(blueprints)
-        if blueprint.has_attribute('color'):
-            color = np.random.choice(blueprint.get_attribute('color').recommended_values)
-            blueprint.set_attribute('color', color)
-        if blueprint.has_attribute('driver_id'):
-            driver_id = np.random.choice(blueprint.get_attribute('driver_id').recommended_values)
-            blueprint.set_attribute('driver_id', driver_id)
-        blueprint.set_attribute('role_name', 'autopilot')
-
-        # prepare the light state of the cars to spawn
-        light_state = vls.NONE
-        if args.car_lights_on:
-            light_state = vls.Position | vls.LowBeam | vls.LowBeam
-
-        # spawn the cars and set their autopilot and light state all together
-        batch.append(SpawnActor(blueprint, transform)
-            .then(SetAutopilot(FutureActor, True, traffic_manager.get_port()))
-            .then(SetVehicleLightState(FutureActor, light_state)))
-
-    for response in client.apply_batch_sync(batch, synchronous_master):
-        if response.error:
-            logging.error(response.error)
-        else:
-            vehicles_list.append(response.actor_id)
-
-    # -------------
-    # Spawn Walkers
-    # -------------
-    # some settings
-    percentagePedestriansRunning = 0.0      # how many pedestrians will run
-    percentagePedestriansCrossing = 0.0     # how many pedestrians will walk through the road
-    # 1. take all the random locations to spawn
-    spawn_points = []
-    for i in range(args.number_of_walkers):
-        spawn_point = carla.Transform()
-        loc = world.get_random_location_from_navigation()
-        if (loc != None):
-            spawn_point.location = loc
-            spawn_points.append(spawn_point)
-    # 2. we spawn the walker object
-    batch = []
-    walker_speed = []
-    for spawn_point in spawn_points:
-        walker_bp = np.random.choice(blueprintsWalkers)
-        # set as not invincible
-        if walker_bp.has_attribute('is_invincible'):
-            walker_bp.set_attribute('is_invincible', 'false')
-        # set the max speed
-        if walker_bp.has_attribute('speed'):
-            if (np.random.random() > percentagePedestriansRunning):
-                # walking
-                walker_speed.append(walker_bp.get_attribute('speed').recommended_values[1])
-            else:
-                # running
-                walker_speed.append(walker_bp.get_attribute('speed').recommended_values[2])
-        else:
-            print("Walker has no speed")
-            walker_speed.append(0.0)
-        batch.append(SpawnActor(walker_bp, spawn_point))
-    results = client.apply_batch_sync(batch, True)
-    walker_speed2 = []
-    for i in range(len(results)):
-        if results[i].error:
-            logging.error(results[i].error)
-        else:
-            walkers_list.append({"id": results[i].actor_id})
-            walker_speed2.append(walker_speed[i])
-    walker_speed = walker_speed2
-    # 3. we spawn the walker controller
-    batch = []
-    walker_controller_bp = world.get_blueprint_library().find('controller.ai.walker')
-    for i in range(len(walkers_list)):
-        batch.append(SpawnActor(walker_controller_bp, carla.Transform(), walkers_list[i]["id"]))
-    results = client.apply_batch_sync(batch, True)
-    for i in range(len(results)):
-        if results[i].error:
-            logging.error(results[i].error)
-        else:
-            walkers_list[i]["con"] = results[i].actor_id
-    # 4. we put altogether the walkers and controllers id to get the objects from their id
-    for i in range(len(walkers_list)):
-        all_id.append(walkers_list[i]["con"])
-        all_id.append(walkers_list[i]["id"])
-    all_actors = world.get_actors(all_id)
-
-    # wait for a tick to ensure client receives the last transform of the walkers we have just created
-    world.tick()
-
-    # 5. initialize each controller and set target to walk to (list is [controler, actor, controller, actor ...])
-    # set how many pedestrians can cross the road
-    world.set_pedestrians_cross_factor(percentagePedestriansCrossing)
-    for i in range(0, len(all_id), 2):
-        # start walker
-        all_actors[i].start()
-        # set walk to random point
-        all_actors[i].go_to_location(world.get_random_location_from_navigation())
-        # max speed
-        all_actors[i].set_max_speed(float(walker_speed[int(i/2)]))
-
-    print('spawned %d vehicles and %d walkers, press Ctrl+C to exit.' % (len(vehicles_list), len(walkers_list)))
-
-    # example of how to use parameters
-    traffic_manager.global_percentage_speed_difference(30.0)
-
-    # spawn_npc.py try block END
-    return vehicles_list, all_actors, all_id, walkers_list
-
 
 def game_loop(args):
     """ Main loop for agent"""
@@ -902,8 +693,6 @@ def game_loop(args):
         settings.fixed_delta_seconds = delta
         settings.synchronous_mode = True
         world.world.apply_settings(settings)
-
-        vehicles_list, all_actors, all_id, walkers_list = create_npcs(client, args)
         # END
         controller = KeyboardControl(world)
 
@@ -926,8 +715,7 @@ def game_loop(args):
             else:
                 destination = spawn_points[1].location
 
-            agent.set_destination(agent.vehicle.get_location(),
-                    destination, clean=True)
+            agent.set_destination(agent.vehicle.get_location(), destination, clean=True)
 
         clock = pygame.time.Clock()
 
@@ -936,7 +724,7 @@ def game_loop(args):
             world.world.tick() # synchronous
             hud.on_world_tick(
                 world.world.get_snapshot().timestamp)
-            if controller.parse_events(client, world, clock):
+            if controller.parse_events():
                 return
 
             # As soon as the server is ready continue!
@@ -944,7 +732,7 @@ def game_loop(args):
             #     continue
 
             if args.agent == "Roaming" or args.agent == "Basic":
-                if controller.parse_events(client, world, clock):
+                if controller.parse_events():
                     return
 
                 # as soon as the server is ready continue!
@@ -981,17 +769,6 @@ def game_loop(args):
                 world.player.apply_control(control)
 
     finally:
-        if vehicles_list is not None:
-            print('\ndestroying %d vehicles' % len(vehicles_list))
-            client.apply_batch([carla.command.DestroyActor(x) for x in vehicles_list])
-
-            # stop walker controllers (list is [controller, actor, controller, actor ...])
-            for i in range(0, len(all_id), 2):
-                all_actors[i].stop()
-
-            print('\ndestroying %d walkers' % len(walkers_list))
-            client.apply_batch([carla.command.DestroyActor(x) for x in all_id])
-
         if world is not None:
             if original_settings is not None:
                 world.world.apply_settings(original_settings)
@@ -1060,42 +837,6 @@ def main():
         help='Set seed for repeating executions (default: None)',
         default=None,
         type=int)
-    
-    argparser.add_argument(
-        '-n', '--number-of-vehicles',
-        metavar='N',
-        default=10,
-        type=int,
-        help='number of vehicles (default: 10)')
-    argparser.add_argument(
-        '-w', '--number-of-walkers',
-        metavar='W',
-        default=50,
-        type=int,
-        help='number of walkers (default: 50)')
-    argparser.add_argument(
-        '--safe',
-        action='store_true',
-        help='avoid spawning vehicles prone to accidents')
-    argparser.add_argument(
-        '--filterv',
-        metavar='PATTERN',
-        default='vehicle.*',
-        help='vehicles filter (default: "vehicle.*")')
-    argparser.add_argument(
-        '--filterw',
-        metavar='PATTERN',
-        default='walker.pedestrian.*',
-        help='pedestrians filter (default: "walker.pedestrian.*")')
-    argparser.add_argument(
-        '--hybrid',
-        action='store_true',
-        help='Enanble')
-    argparser.add_argument(
-        '--car-lights-on',
-        action='store_true',
-        default=False,
-        help='Enanble car lights')
 
     args = argparser.parse_args()
 

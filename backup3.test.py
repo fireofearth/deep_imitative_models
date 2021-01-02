@@ -22,54 +22,14 @@ import re
 import sys
 import weakref
 import time
-import numpy as np
+from matplotlib import cm
+import open3d as o3d
 
 import pygame
 from pygame.locals import KMOD_CTRL
-from pygame.locals import KMOD_SHIFT
-from pygame.locals import K_0
-from pygame.locals import K_9
-from pygame.locals import K_BACKQUOTE
-from pygame.locals import K_BACKSPACE
-from pygame.locals import K_COMMA
-from pygame.locals import K_DOWN
 from pygame.locals import K_ESCAPE
-from pygame.locals import K_F1
-from pygame.locals import K_LEFT
-from pygame.locals import K_PERIOD
-from pygame.locals import K_RIGHT
-from pygame.locals import K_SLASH
-from pygame.locals import K_SPACE
-from pygame.locals import K_TAB
-from pygame.locals import K_UP
-from pygame.locals import K_a
-from pygame.locals import K_b
-from pygame.locals import K_c
-from pygame.locals import K_d
-from pygame.locals import K_g
-from pygame.locals import K_h
-from pygame.locals import K_i
-from pygame.locals import K_l
-from pygame.locals import K_m
-from pygame.locals import K_n
-from pygame.locals import K_p
 from pygame.locals import K_q
-from pygame.locals import K_r
-from pygame.locals import K_s
-from pygame.locals import K_v
-from pygame.locals import K_w
-from pygame.locals import K_x
-from pygame.locals import K_z
-from pygame.locals import K_MINUS
-from pygame.locals import K_EQUALS
-
-# ==============================================================================
-# -- Find CARLA module ---------------------------------------------------------
-# ==============================================================================
-
-# ==============================================================================
-# -- Add PythonAPI for release mode --------------------------------------------
-# ==============================================================================
+import numpy as np
 
 sys.path.append(
     os.path.join(
@@ -78,12 +38,15 @@ sys.path.append(
 
 import carla
 from carla import ColorConverter as cc
-from carla import VehicleLightState as vls
 
-from agents.navigation.behavior_agent import BehaviorAgent  # pylint: disable=import-error
-from agents.navigation.roaming_agent import RoamingAgent  # pylint: disable=import-error
-from agents.navigation.basic_agent import BasicAgent  # pylint: disable=import-error
+from agents.navigation.behavior_agent import BehaviorAgent
 
+# ==============================================================================
+# -- Constants -----------------------------------------------------------------
+# ==============================================================================
+
+VIRIDIS = np.array(cm.get_cmap('plasma').colors)
+VID_RANGE = np.linspace(0.0, 1.0, VIRIDIS.shape[0])
 
 # ==============================================================================
 # -- Global functions ----------------------------------------------------------
@@ -103,6 +66,53 @@ def get_actor_display_name(actor, truncate=250):
     name = ' '.join(actor.type_id.replace('_', '.').title().split('.')[1:])
     return (name[:truncate - 1] + u'\u2026') if len(name) > truncate else name
 
+def generate_lidar_bp(arg, world, blueprint_library, delta):
+    """Generates a CARLA blueprint based on the script parameters"""
+    lidar_bp = blueprint_library.find('sensor.lidar.ray_cast')
+    if arg.no_noise:
+        lidar_bp.set_attribute('dropoff_general_rate', '0.0')
+        lidar_bp.set_attribute('dropoff_intensity_limit', '1.0')
+        lidar_bp.set_attribute('dropoff_zero_intensity', '0.0')
+    else:
+        lidar_bp.set_attribute('noise_stddev', '0.2')
+
+    lidar_bp.set_attribute('upper_fov', str(arg.upper_fov))
+    lidar_bp.set_attribute('lower_fov', str(arg.lower_fov))
+    lidar_bp.set_attribute('channels', str(arg.channels))
+    lidar_bp.set_attribute('range', str(arg.range))
+    lidar_bp.set_attribute('rotation_frequency', str(1.0 / delta))
+    lidar_bp.set_attribute('points_per_second', str(arg.points_per_second))
+    return lidar_bp
+
+def lidar_callback(point_cloud, point_list):
+    """Prepares a point cloud with intensity
+    colors ready to be consumed by Open3D"""
+    data = np.copy(np.frombuffer(point_cloud.raw_data, dtype=np.dtype('f4')))
+    data = np.reshape(data, (int(data.shape[0] / 4), 4))
+
+    # Isolate the intensity and compute a color for it
+    intensity = data[:, -1]
+    intensity_col = 1.0 - np.log(intensity) / np.log(np.exp(-0.004 * 100))
+    int_color = np.c_[
+        np.interp(intensity_col, VID_RANGE, VIRIDIS[:, 0]),
+        np.interp(intensity_col, VID_RANGE, VIRIDIS[:, 1]),
+        np.interp(intensity_col, VID_RANGE, VIRIDIS[:, 2])]
+
+    # Isolate the 3D data
+    points = data[:, :-1]
+
+    # We're negating the y to correclty visualize a world that matches
+    # what we see in Unreal since Open3D uses a right-handed coordinate system
+    points[:, :1] = -points[:, :1]
+
+    # # An example of converting points from sensor to vehicle space if we had
+    # # a carla.Transform variable named "tran":
+    # points = np.append(points, np.ones((points.shape[0], 1)), axis=1)
+    # points = np.dot(tran.get_matrix(), points.T).T
+    # points = points[:, :-1]
+
+    point_list.points = o3d.utility.Vector3dVector(points)
+    point_list.colors = o3d.utility.Vector3dVector(int_color)
 
 # ==============================================================================
 # -- World ---------------------------------------------------------------
@@ -194,7 +204,7 @@ class World(object):
     def render(self, display):
         """Render world"""
         self.camera_manager.render(display)
-        self.hud.render(display)
+        # self.hud.render(display)
 
     def destroy_sensors(self):
         """Destroy sensors"""
@@ -219,44 +229,23 @@ class World(object):
 # -- KeyboardControl -----------------------------------------------------------
 # ==============================================================================
 
+
 class KeyboardControl(object):
     def __init__(self, world):
         world.hud.notification("Press 'H' or '?' for help.", seconds=4.0)
 
-    @staticmethod
-    def _is_quit_shortcut(key):
-        """Shortcut for quitting"""
-        return (key == K_ESCAPE) or (key == K_q and pygame.key.get_mods() & KMOD_CTRL)
-
-    def parse_events(self, client, world, clock):
+    def parse_events(self):
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 return True
             if event.type == pygame.KEYUP:
                 if self._is_quit_shortcut(event.key):
                     return True
-                # from manual_control.py
-                elif event.key == K_BACKSPACE:
-                    if self._autopilot_enabled:
-                        world.player.set_autopilot(False)
-                        world.restart()
-                        world.player.set_autopilot(True)
-                    else:
-                        world.restart()
-                elif event.key == K_F1:
-                    world.hud.toggle_info()
-                elif event.key == K_TAB:
-                    world.camera_manager.toggle_camera()
-                elif event.key == K_c and pygame.key.get_mods() & KMOD_SHIFT:
-                    world.next_weather(reverse=True)
-                elif event.key == K_c:
-                    world.next_weather()
-                elif event.key == K_BACKQUOTE:
-                    world.camera_manager.next_sensor()
-                elif event.key == K_n:
-                    world.camera_manager.next_sensor()
-                elif event.key > K_0 and event.key <= K_9:
-                    world.camera_manager.set_sensor(event.key - 1 - K_0)
+
+    @staticmethod
+    def _is_quit_shortcut(key):
+        """Shortcut for quitting"""
+        return (key == K_ESCAPE) or (key == K_q and pygame.key.get_mods() & KMOD_CTRL)
 
 # ==============================================================================
 # -- HUD -----------------------------------------------------------------------
@@ -708,167 +697,6 @@ class CameraManager(object):
 # -- Game Loop ---------------------------------------------------------
 # ==============================================================================
 
-def create_npcs(client, args):
-    vehicles_list = []
-    walkers_list = []
-    all_id = []
-    client = carla.Client(args.host, args.port)
-    client.set_timeout(10.0)
-    synchronous_master = False
-    np.random.seed(args.seed if args.seed is not None else int(time.time()))
-
-    # spawn_npc.py try block BEGIN
-    world = client.get_world()
-    traffic_manager = client.get_trafficmanager(8000)
-    traffic_manager.set_global_distance_to_leading_vehicle(1.0)
-    if args.hybrid:
-        traffic_manager.set_hybrid_physics_mode(True)
-    if args.seed is not None:
-        traffic_manager.set_random_device_seed(args.seed)
-    # always sync
-
-    blueprints = world.get_blueprint_library().filter(args.filterv)
-    blueprintsWalkers = world.get_blueprint_library().filter(args.filterw)
-
-    if args.safe:
-        blueprints = [x for x in blueprints if int(x.get_attribute('number_of_wheels')) == 4]
-        blueprints = [x for x in blueprints if not x.id.endswith('isetta')]
-        blueprints = [x for x in blueprints if not x.id.endswith('carlacola')]
-        blueprints = [x for x in blueprints if not x.id.endswith('cybertruck')]
-        blueprints = [x for x in blueprints if not x.id.endswith('t2')]
-
-    blueprints = sorted(blueprints, key=lambda bp: bp.id)
-
-    spawn_points = world.get_map().get_spawn_points()
-    number_of_spawn_points = len(spawn_points)
-
-    if args.number_of_vehicles < number_of_spawn_points:
-        np.random.shuffle(spawn_points)
-    elif args.number_of_vehicles > number_of_spawn_points:
-        msg = 'requested %d vehicles, but could only find %d spawn points'
-        logging.warning(msg, args.number_of_vehicles, number_of_spawn_points)
-        args.number_of_vehicles = number_of_spawn_points
-
-    # @todo cannot import these directly.
-    SpawnActor = carla.command.SpawnActor
-    SetAutopilot = carla.command.SetAutopilot
-    SetVehicleLightState = carla.command.SetVehicleLightState
-    FutureActor = carla.command.FutureActor
-
-    # --------------
-    # Spawn vehicles
-    # --------------
-    batch = []
-    for n, transform in enumerate(spawn_points):
-        if n >= args.number_of_vehicles:
-            break
-        blueprint = np.random.choice(blueprints)
-        if blueprint.has_attribute('color'):
-            color = np.random.choice(blueprint.get_attribute('color').recommended_values)
-            blueprint.set_attribute('color', color)
-        if blueprint.has_attribute('driver_id'):
-            driver_id = np.random.choice(blueprint.get_attribute('driver_id').recommended_values)
-            blueprint.set_attribute('driver_id', driver_id)
-        blueprint.set_attribute('role_name', 'autopilot')
-
-        # prepare the light state of the cars to spawn
-        light_state = vls.NONE
-        if args.car_lights_on:
-            light_state = vls.Position | vls.LowBeam | vls.LowBeam
-
-        # spawn the cars and set their autopilot and light state all together
-        batch.append(SpawnActor(blueprint, transform)
-            .then(SetAutopilot(FutureActor, True, traffic_manager.get_port()))
-            .then(SetVehicleLightState(FutureActor, light_state)))
-
-    for response in client.apply_batch_sync(batch, synchronous_master):
-        if response.error:
-            logging.error(response.error)
-        else:
-            vehicles_list.append(response.actor_id)
-
-    # -------------
-    # Spawn Walkers
-    # -------------
-    # some settings
-    percentagePedestriansRunning = 0.0      # how many pedestrians will run
-    percentagePedestriansCrossing = 0.0     # how many pedestrians will walk through the road
-    # 1. take all the random locations to spawn
-    spawn_points = []
-    for i in range(args.number_of_walkers):
-        spawn_point = carla.Transform()
-        loc = world.get_random_location_from_navigation()
-        if (loc != None):
-            spawn_point.location = loc
-            spawn_points.append(spawn_point)
-    # 2. we spawn the walker object
-    batch = []
-    walker_speed = []
-    for spawn_point in spawn_points:
-        walker_bp = np.random.choice(blueprintsWalkers)
-        # set as not invincible
-        if walker_bp.has_attribute('is_invincible'):
-            walker_bp.set_attribute('is_invincible', 'false')
-        # set the max speed
-        if walker_bp.has_attribute('speed'):
-            if (np.random.random() > percentagePedestriansRunning):
-                # walking
-                walker_speed.append(walker_bp.get_attribute('speed').recommended_values[1])
-            else:
-                # running
-                walker_speed.append(walker_bp.get_attribute('speed').recommended_values[2])
-        else:
-            print("Walker has no speed")
-            walker_speed.append(0.0)
-        batch.append(SpawnActor(walker_bp, spawn_point))
-    results = client.apply_batch_sync(batch, True)
-    walker_speed2 = []
-    for i in range(len(results)):
-        if results[i].error:
-            logging.error(results[i].error)
-        else:
-            walkers_list.append({"id": results[i].actor_id})
-            walker_speed2.append(walker_speed[i])
-    walker_speed = walker_speed2
-    # 3. we spawn the walker controller
-    batch = []
-    walker_controller_bp = world.get_blueprint_library().find('controller.ai.walker')
-    for i in range(len(walkers_list)):
-        batch.append(SpawnActor(walker_controller_bp, carla.Transform(), walkers_list[i]["id"]))
-    results = client.apply_batch_sync(batch, True)
-    for i in range(len(results)):
-        if results[i].error:
-            logging.error(results[i].error)
-        else:
-            walkers_list[i]["con"] = results[i].actor_id
-    # 4. we put altogether the walkers and controllers id to get the objects from their id
-    for i in range(len(walkers_list)):
-        all_id.append(walkers_list[i]["con"])
-        all_id.append(walkers_list[i]["id"])
-    all_actors = world.get_actors(all_id)
-
-    # wait for a tick to ensure client receives the last transform of the walkers we have just created
-    world.tick()
-
-    # 5. initialize each controller and set target to walk to (list is [controler, actor, controller, actor ...])
-    # set how many pedestrians can cross the road
-    world.set_pedestrians_cross_factor(percentagePedestriansCrossing)
-    for i in range(0, len(all_id), 2):
-        # start walker
-        all_actors[i].start()
-        # set walk to random point
-        all_actors[i].go_to_location(world.get_random_location_from_navigation())
-        # max speed
-        all_actors[i].set_max_speed(float(walker_speed[int(i/2)]))
-
-    print('spawned %d vehicles and %d walkers, press Ctrl+C to exit.' % (len(vehicles_list), len(walkers_list)))
-
-    # example of how to use parameters
-    traffic_manager.global_percentage_speed_difference(30.0)
-
-    # spawn_npc.py try block END
-    return vehicles_list, all_actors, all_id, walkers_list
-
 
 def game_loop(args):
     """ Main loop for agent"""
@@ -876,6 +704,8 @@ def game_loop(args):
     pygame.init()
     pygame.font.init()
     world = None
+    vis = None
+    lidar = None
     original_settings = None
     tot_target_reached = 0
     num_min_waypoints = 21
@@ -897,106 +727,117 @@ def game_loop(args):
         traffic_manager = client.get_trafficmanager(8000)
         traffic_manager.set_synchronous_mode(True)
 
-        delta = 0.06
+        delta = 0.05
 
         settings.fixed_delta_seconds = delta
         settings.synchronous_mode = True
         world.world.apply_settings(settings)
-
-        vehicles_list, all_actors, all_id, walkers_list = create_npcs(client, args)
         # END
         controller = KeyboardControl(world)
 
-        if args.agent == "Roaming":
-            agent = RoamingAgent(world.player)
-        elif args.agent == "Basic":
-            agent = BasicAgent(world.player)
-            spawn_point = world.map.get_spawn_points()[0]
-            agent.set_destination((spawn_point.location.x,
-                                   spawn_point.location.y,
-                                   spawn_point.location.z))
+        agent = BehaviorAgent(world.player, behavior=args.behavior)
+
+        spawn_points = world.map.get_spawn_points()
+        random.shuffle(spawn_points)
+
+        if spawn_points[0].location != agent.vehicle.get_location():
+            destination = spawn_points[0].location
         else:
-            agent = BehaviorAgent(world.player, behavior=args.behavior)
+            destination = spawn_points[1].location
 
-            spawn_points = world.map.get_spawn_points()
-            random.shuffle(spawn_points)
+        agent.set_destination(agent.vehicle.get_location(), destination, clean=True)
 
-            if spawn_points[0].location != agent.vehicle.get_location():
-                destination = spawn_points[0].location
-            else:
-                destination = spawn_points[1].location
+        # open3d_lidar setup BEGIN
+        logging.info("open3d_lidar setup")
+        blueprint_library = world.world.get_blueprint_library()
+        lidar_bp = generate_lidar_bp(args, world.world, blueprint_library, delta)
 
-            agent.set_destination(agent.vehicle.get_location(),
-                    destination, clean=True)
+        user_offset = carla.Location(args.x, args.y, args.z)
+        lidar_transform = carla.Transform(carla.Location(x=-0.5, z=1.8) + user_offset)
+
+        lidar = world.world.spawn_actor(lidar_bp,
+                lidar_transform, attach_to=world.player)
+
+        point_list = o3d.geometry.PointCloud()
+        lidar.listen(lambda data: lidar_callback(data, point_list))
+
+        vis = o3d.visualization.Visualizer()
+        vis.create_window(
+            window_name='Carla Lidar',
+            width=960,
+            height=540,
+            left=480,
+            top=270)
+        vis.get_render_option().background_color = [0.05, 0.05, 0.05]
+        vis.get_render_option().point_size = 1
+        vis.get_render_option().show_coordinate_frame = True
+        frame = 0
+        # open3d_lidar setup END
 
         clock = pygame.time.Clock()
 
+        logging.info("entering loop")
         while True:
-            clock.tick_busy_loop(60)
-            world.world.tick() # synchronous
-            hud.on_world_tick(
-                world.world.get_snapshot().timestamp)
-            if controller.parse_events(client, world, clock):
-                return
+            # open3d_lidar render BEGIN
+            # print("open3d_lidar render")
+            if frame == 2:
+                vis.add_geometry(point_list)
+            vis.update_geometry(point_list)
+            vis.poll_events()
+            vis.update_renderer()
+            # time.sleep(0.005)
+            world.world.tick()
+            frame += 1
+            # open3d_lidar render END
 
+            # move self.world.on_tick(hud.on_world_tick) here BEGIN
+            # print("HUD tick")
+            # hud.on_world_tick(
+            #     world.world.get_snapshot().timestamp)
+            # move self.world.on_tick(hud.on_world_tick) here END
+
+            if controller.parse_events():
+                return
+            
             # As soon as the server is ready continue!
             # if not world.world.wait_for_tick(10.0):
             #     continue
 
-            if args.agent == "Roaming" or args.agent == "Basic":
-                if controller.parse_events(client, world, clock):
-                    return
+            agent.update_information()
 
-                # as soon as the server is ready continue!
-                # world.world.wait_for_tick(10.0)
+            # display.fill("red")
+            world.tick(clock)
+            clock.tick_busy_loop(50)
+            world.render(display)
+            pygame.display.flip()
 
-                world.tick(clock)
-                world.render(display)
-                pygame.display.flip()
-                control = agent.run_step()
-                control.manual_gear_shift = False
-                world.player.apply_control(control)
-            else:
-                agent.update_information()
+            # Set new destination when target has been reached
+            if len(agent.get_local_planner().waypoints_queue) < num_min_waypoints:
+                agent.reroute(spawn_points)
+                tot_target_reached += 1
+                world.hud.notification("The target has been reached " +
+                                        str(tot_target_reached) + " times.", seconds=4.0)
 
-                world.tick(clock)
-                world.render(display)
-                pygame.display.flip()
+            elif len(agent.get_local_planner().waypoints_queue) == 0:
+                print("Target reached, mission accomplished...")
+                break
 
-                # Set new destination when target has been reached
-                if len(agent.get_local_planner().waypoints_queue) < num_min_waypoints and args.loop:
-                    agent.reroute(spawn_points)
-                    tot_target_reached += 1
-                    world.hud.notification("The target has been reached " +
-                                           str(tot_target_reached) + " times.", seconds=4.0)
+            speed_limit = world.player.get_speed_limit()
+            agent.get_local_planner().set_speed(speed_limit)
 
-                elif len(agent.get_local_planner().waypoints_queue) == 0 and not args.loop:
-                    print("Target reached, mission accomplished...")
-                    break
-
-                speed_limit = world.player.get_speed_limit()
-                agent.get_local_planner().set_speed(speed_limit)
-
-                control = agent.run_step()
-                world.player.apply_control(control)
+            control = agent.run_step()
+            world.player.apply_control(control)
 
     finally:
-        if vehicles_list is not None:
-            print('\ndestroying %d vehicles' % len(vehicles_list))
-            client.apply_batch([carla.command.DestroyActor(x) for x in vehicles_list])
-
-            # stop walker controllers (list is [controller, actor, controller, actor ...])
-            for i in range(0, len(all_id), 2):
-                all_actors[i].stop()
-
-            print('\ndestroying %d walkers' % len(walkers_list))
-            client.apply_batch([carla.command.DestroyActor(x) for x in all_id])
-
+        if vis is not None:
+            vis.destroy_window()
+        if lidar is not None:
+            lidar.destroy()
+        if original_settings is not None \
+                and world is not None:
+            world.world.apply_settings(original_settings)
         if world is not None:
-            if original_settings is not None:
-                world.world.apply_settings(original_settings)
             world.destroy()
-
         pygame.quit()
 
 
@@ -1042,11 +883,6 @@ def main():
         type=float,
         help='Gamma correction of the camera (default: 2.2)')
     argparser.add_argument(
-        '-l', '--loop',
-        action='store_true',
-        dest='loop',
-        help='Sets a new random destination upon reaching the previous one (default: False)')
-    argparser.add_argument(
         '-b', '--behavior', type=str,
         choices=["cautious", "normal", "aggressive"],
         help='Choose one of the possible agent behaviors (default: normal) ',
@@ -1061,41 +897,52 @@ def main():
         default=None,
         type=int)
     
+    # open3d_lidar parameters BEGIN
     argparser.add_argument(
-        '-n', '--number-of-vehicles',
-        metavar='N',
-        default=10,
+        '--no-noise',
+        action='store_true',
+        help='remove the drop off and noise from the normal (non-semantic) lidar')
+    argparser.add_argument(
+        '--upper-fov',
+        default=15.0,
+        type=float,
+        help='lidar\'s upper field of view in degrees (default: 15.0)')
+    argparser.add_argument(
+        '--lower-fov',
+        default=-25.0,
+        type=float,
+        help='lidar\'s lower field of view in degrees (default: -25.0)')
+    argparser.add_argument(
+        '--channels',
+        default=64.0,
+        type=float,
+        help='lidar\'s channel count (default: 64)')
+    argparser.add_argument(
+        '--range',
+        default=100.0,
+        type=float,
+        help='lidar\'s maximum range in meters (default: 100.0)')
+    argparser.add_argument(
+        '--points-per-second',
+        default=500000,
         type=int,
-        help='number of vehicles (default: 10)')
+        help='lidar\'s points per second (default: 500000)')
     argparser.add_argument(
-        '-w', '--number-of-walkers',
-        metavar='W',
-        default=50,
-        type=int,
-        help='number of walkers (default: 50)')
+        '-x',
+        default=0.0,
+        type=float,
+        help='offset in the sensor position in the X-axis in meters (default: 0.0)')
     argparser.add_argument(
-        '--safe',
-        action='store_true',
-        help='avoid spawning vehicles prone to accidents')
+        '-y',
+        default=0.0,
+        type=float,
+        help='offset in the sensor position in the Y-axis in meters (default: 0.0)')
     argparser.add_argument(
-        '--filterv',
-        metavar='PATTERN',
-        default='vehicle.*',
-        help='vehicles filter (default: "vehicle.*")')
-    argparser.add_argument(
-        '--filterw',
-        metavar='PATTERN',
-        default='walker.pedestrian.*',
-        help='pedestrians filter (default: "walker.pedestrian.*")')
-    argparser.add_argument(
-        '--hybrid',
-        action='store_true',
-        help='Enanble')
-    argparser.add_argument(
-        '--car-lights-on',
-        action='store_true',
-        default=False,
-        help='Enanble car lights')
+        '-z',
+        default=0.0,
+        type=float,
+        help='offset in the sensor position in the Z-axis in meters (default: 0.0)')
+    # END
 
     args = argparser.parse_args()
 

@@ -200,7 +200,7 @@ def run_episode(client,
     # ---------------------------------------
     # TODO incorporate pasts of other agents!
     # ---------------------------------------    
-    log.warning("Defaulting to a hardcoded A past of 1")    
+    log.warning("Defaulting to a hardcoded A past of 5")    
     A_past = 5
 
     # Ensure all previous episodes were properly concluded.
@@ -216,10 +216,13 @@ def run_episode(client,
     # Step through the simulation.
     for frame in range(0, episode_params.frames_per_episode):
         log.debug("On frame {:06d}".format(frame))
-        if frame == episode_params.frames_per_episode - 1:
-            summary = "Ran out of episode frames! Treating as failure"
-            log.warning(summary)
-            metrics.conclude_episode(success=False, summary=summary)
+        if frame >= episode_params.frames_per_episode - 1:
+            # summary = "Ran out of episode frames! Treating as failure"
+            # log.warning(summary)
+            summary = f"Looped through all {episode_params.frames_per_episode} episode frames"
+            log.info(summary)
+            # metrics.conclude_episode(success=False, summary=summary)
+            metrics.conclude_episode(success=True, summary=summary)
             with open(episode_params.root_dir + "/metrics.dill".format(episode_params.episode), 'wb') as f:
                 dill.dump(metrics, f)
             break
@@ -275,6 +278,13 @@ def run_episode(client,
         # Populate extra metrics.
         extra_metrics = {}
         traffic_light_state, traffic_light_data = waypointer.get_upcoming_traffic_light(measurement, sensor_data)
+
+        # https://carla.readthedocs.io/en/latest/ref_code_recipes/#traffic-light-recipe
+        # if vehicle_actor.is_at_traffic_light():
+        #     traffic_light = vehicle_actor.get_traffic_light()
+        #     if traffic_light.get_state() == carla.TrafficLightState.Red:
+        #         traffic_light.set_state(carla.TrafficLightState.Green)
+
 
         log.debug("Upcoming traffic light is: '{}'.".format(traffic_light_state))
         current_obs.traffic_light_state = traffic_light_state
@@ -471,10 +481,10 @@ def run_episode(client,
 
 def set_up_directories(episode_params, cfg, mainconf, dataconf):
     directory = '{}/episode_{:06d}/'.format(episode_params.root_dir, episode_params.episode)
-    os.makedirs(directory)
+    os.makedirs(directory, exist_ok=True)
     if mainconf.save_dim_feeds or dataconf.save_data:
         dim_feeds_dir = directory + "/dim_feeds/"
-        os.makedirs(dim_feeds_dir)
+        os.makedirs(dim_feeds_dir, exist_ok=True)
     else:
         dim_feeds_dir = None
 

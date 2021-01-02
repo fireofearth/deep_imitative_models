@@ -254,7 +254,8 @@ def run_carla_client(cfg, server_log_fn):
         if record_google_sheets:
             gsheet_results = gu.MultiepisodeResults(tag=tag + 't_' + server_tag, multiep_metrics=metrics, root_dir=root_dir)
 
-        for episode in range(0, expconf.n_episodes):
+        for episode in range(expconf.n_episodes_run, expconf.n_episodes):
+        # for episode in range(0, expconf.n_episodes):
             log.info('Starting episode {}/{}'.format(episode, expconf.n_episodes))
             
             # Bundle the parameters of the episode.
