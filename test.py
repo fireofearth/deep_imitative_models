@@ -625,15 +625,11 @@ class LidarManager(object):
         self.lidar_bp.set_attribute('rotation_frequency', '10.0')
         self.lidar_bp.set_attribute('upper_fov', '10.0')
         self.lidar_bp.set_attribute('lower_fov', '-30.0')
-        self._camera_transforms = (
-                carla.Transform(carla.Location(z=2.5)),
-                    # carla.Rotation(pitch=0.0)),
-                carla.AttachmentType.Rigid)
         self.sensor = world.spawn_actor(
                 self.lidar_bp,
-                self._camera_transforms[0],
+                carla.Transform(carla.Location(z=2.5)),
                 attach_to=self._parent,
-                attachment_type=self._camera_transforms[1])
+                attachment_type=carla.AttachmentType.Rigid)
         
         # We need to pass the lambda a weak reference to
         # self to avoid circular reference.
@@ -647,8 +643,9 @@ class LidarManager(object):
             return
         print("in LidarManager._parse_image")
         player_transform = self._parent.get_transform()
+        player_bbox = self._parent.bounding_box
         bevs = build_overhead.build_BEV(image, player_transform,
-                self.sensor, self.lidar_params)
+                self.sensor, self.lidar_params, player_bbox)
         overhead_features = bevs
         datum = {}
         datum['overhead_features'] = overhead_features
@@ -1114,7 +1111,8 @@ def main():
     argparser.add_argument(
         '--filter',
         metavar='PATTERN',
-        default='vehicle.*',
+        # default='vehicle.*',
+        default='vehicle.tesla.model3',
         help='Actor filter (default: "vehicle.*")')
     argparser.add_argument(
         '--gamma',

@@ -21,6 +21,7 @@ def mult_matrices(mat_a, mat_b):
     return np.dot(mat_a, mat_b)
 
 
+
 def splat_points(points, splat_params, nd=2):
     meters_max = splat_params.meters_max
     pixels_per_meter = splat_params.pixels_per_meter
@@ -47,7 +48,7 @@ def splat_points(points, splat_params, nd=2):
     return overhead_splat
 
 
-def get_rectifying_player_transform(player_transform):
+def get_rectifying_player_transform(lidar_sensor, player_transform):
     """
     based on carla_preprocess.get_rectifying_player_transform
 
@@ -61,50 +62,36 @@ def get_rectifying_player_transform(player_transform):
     """
     rotation = carla.Rotation(
             pitch=-player_transform.rotation.pitch,
-            yaw=0.0,
             roll=-player_transform.rotation.roll)
-    return carla.Transform(carla.Location(), rotation)
+    translation = carla.Location(z=2.5)
+    return carla.Transform(translation, rotation)
 
 
-def get_rectified_sensor_transform_mat(lidar_sensor, player_transform):
+def get_rectified_sensor_data(lidar_sensor, lidar_measurement, player_transform):
     """
-    based on carla_preprocess.get_rectified_sensor_transform
-    """
-    rectified_transform = get_rectifying_player_transform(player_transform)
-    return rectified_transform.get_matrix()
-    # lidar_transform = lidar_sensor.get_transform()
-    # return mult_matrices(
-    #         rectified_transform.get_matrix(),
-    #         lidar_transform.get_matrix())
-
-
-def splat_lidar(lidar_sensor, lidar_measurement, player_transform, lidar_params):
-    """
-    based on carla_preprocess.splat_lidar
+    based on carla_preprocess.splat_lidar and
+    https://carla.readthedocs.io/en/latest/tuto_G_retrieve_data/#lidar-raycast-sensor
 
     Parameters
     ----------
     lidar_sensor : carla.Sensor - a sensor from blueprint sensor.lidar.ray_cast
     lidar_measurement : carla.LidarMeasurement
     player_transform : carla.Transform
-    lidar_params : LidarParams
     """
-    # modified from carla_preprocess.splat_lidar
     raw_data = lidar_measurement.raw_data
     raw_data = np.frombuffer(raw_data, dtype=np.dtype('f4'))
     raw_data = np.reshape(raw_data, (int(raw_data.shape[0] / 4), 4))
     lidar_point_cloud = raw_data[:, :3]
-    lidar_mat = get_rectified_sensor_transform_mat(lidar_sensor, player_transform)
-    lidar_points_at_car = transform_points(lidar_mat, lidar_point_cloud)
-    # unchanged from carla_preprocess.splat_lidar
+    rectified_transform = get_rectifying_player_transform(
+            lidar_sensor, player_transform)
+    rectified_mat = rectified_transform.get_matrix()
+    lidar_points_at_car = transform_points(rectified_mat, lidar_point_cloud)
     permute = np.array([[1, 0, 0],
                         [0, -1, 0],
-                        [0, 0, -1]], dtype=np.float32)
-    lidar_points_at_car = (permute @ lidar_points_at_car.T).T
-    return splat_points(lidar_points_at_car, lidar_params)
+                        [0, 0, 1]], dtype=np.float32)
+    return (permute @ lidar_points_at_car.T).T
 
-
-def get_occupancy_grid(lidar_sensor, lidar_measurement, player_transform, lidar_params):
+def get_occupancy_grid(points, lidar_params, player_bbox):
     """
     based on carla_preprocess.get_occupancy_grid
 
@@ -116,46 +103,33 @@ def get_occupancy_grid(lidar_sensor, lidar_measurement, player_transform, lidar_
     lidar_params : LidarParams
 
     """
-    raw_data = lidar_measurement.raw_data
-    raw_data = np.frombuffer(raw_data, dtype=np.dtype('f4'))
-    raw_data = np.reshape(raw_data, (int(raw_data.shape[0] / 4), 4))
-    lidar_point_cloud = raw_data[:, :3]
-    lidar_mat = get_rectified_sensor_transform_mat(lidar_sensor, player_transform)
-    lidar_points_at_car = transform_points(lidar_mat, lidar_point_cloud)
-
-    permute = np.array([[1, 0, 0],
-                        [0, -1, 0],
-                        [0, 0, -1]], dtype=np.float32)
-    lidar_points_at_car = (permute @ lidar_points_at_car.T).T
-
-    z_threshold = -4.5
-    z_threshold_second_above = -2.0
-    above_mask = lidar_points_at_car[:, 2] > z_threshold
-
+    # z_threshold = -4.5
+    # z_threshold_second_above = -2.0
+    # above_mask = lidar_points_at_car[:, 2] > z_threshold
+    z_threshold = 0.05
+    z_threshold_second_above = player_bbox.extent.z * 2
+    above_mask = points[:, 2] > z_threshold
 
     meters_max = lidar_params.meters_max
     pixels_per_meter = lidar_params.pixels_per_meter
     val_obstacle = lidar_params.val_obstacle
     def get_occupancy_from_masked_lidar(mask):
-        masked_lidar = lidar_points_at_car[mask]
-        # meters_max = lidar_params['meters_max']
-        # pixels_per_meter = lidar_params['pixels_per_meter']
+        masked_lidar = points[mask]
         xbins = np.linspace(-meters_max, meters_max, meters_max * 2 * pixels_per_meter + 1)
         ybins = xbins
         grid = np.histogramdd(masked_lidar[..., :2], bins=(xbins, ybins))[0]
-        # grid[grid > 0.] = lidar_params['val_obstacle']
         grid[grid > 0.] = val_obstacle
         return grid
 
     feats = ()
-    feats += (get_occupancy_from_masked_lidar(above_mask),)
-    feats += (get_occupancy_from_masked_lidar((1 - above_mask).astype(np.bool)),)
-    second_above_mask = lidar_points_at_car[:, 2] > z_threshold_second_above
+    feats += (get_occupancy_from_masked_lidar(above_mask),) # 1
+    feats += (get_occupancy_from_masked_lidar((1 - above_mask).astype(np.bool)),) # 2
+    second_above_mask = points[:, 2] > z_threshold_second_above
     feats += (get_occupancy_from_masked_lidar(second_above_mask),)
     return np.stack(feats, axis=-1)
 
 
-def build_BEV(lidar_measurement, player_transform, lidar_sensor, lidar_params):
+def build_BEV(lidar_measurement, player_transform, lidar_sensor, lidar_params, player_bbox):
     """
     based on carla_preprocess.build_BEV
 
@@ -166,10 +140,10 @@ def build_BEV(lidar_measurement, player_transform, lidar_sensor, lidar_params):
     lidar_sensor : carla.Sensor - a sensor from blueprint sensor.lidar.ray_cast
     lidar_params : LidarParams
     """
-    overhead_lidar = splat_lidar(lidar_sensor, lidar_measurement,
-            player_transform, lidar_params)
+    lidar_points_at_car = get_rectified_sensor_data(lidar_sensor,
+            lidar_measurement, player_transform)
+    overhead_lidar = splat_points(lidar_points_at_car, lidar_params)
     overhead_lidar_features = overhead_lidar[..., None]
-    ogrid = get_occupancy_grid(lidar_sensor, lidar_measurement,
-            player_transform, lidar_params)
+    ogrid = get_occupancy_grid(lidar_points_at_car, lidar_params, player_bbox)
     overhead_features = np.concatenate((overhead_lidar_features, ogrid), axis=-1)
     return overhead_features
