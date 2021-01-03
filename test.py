@@ -63,7 +63,8 @@ from pygame.locals import K_z
 from pygame.locals import K_MINUS
 from pygame.locals import K_EQUALS
 
-import generate.build_overhead as build_overhead
+import generate.overhead as generate_overhead
+import generate.trajectory as generate_trajectory
 import generate.util as util
 import precog.utils.class_util as classu
 
@@ -601,10 +602,10 @@ class GnssSensor(object):
 
 class LidarManager(object):
 
-    def __init__(self, parent_actor):
+    def __init__(self, player_actor):
         self.lidar_params = LidarParams()
-        self._parent = parent_actor
-        world = self._parent.get_world()
+        self._player = player_actor
+        world = self._player.get_world()
         bp_library = world.get_blueprint_library()
         """
         sensor.lidar.ray_cast creates a carla.LidarMeasurement per step
@@ -628,9 +629,8 @@ class LidarManager(object):
         self.sensor = world.spawn_actor(
                 self.lidar_bp,
                 carla.Transform(carla.Location(z=2.5)),
-                attach_to=self._parent,
+                attach_to=self._player,
                 attachment_type=carla.AttachmentType.Rigid)
-        
         # We need to pass the lambda a weak reference to
         # self to avoid circular reference.
         weak_self = weakref.ref(self)
@@ -642,11 +642,16 @@ class LidarManager(object):
         if not self:
             return
         print("in LidarManager._parse_image")
-        player_transform = self._parent.get_transform()
-        player_bbox = self._parent.bounding_box
-        bevs = build_overhead.build_BEV(image, player_transform,
+        curr_transform = self._player.get_transform()
+        # generate trajectory
+        image.frame
+
+        # generate overhead features
+        player_bbox = self._player.bounding_box
+        bevs = generate_overhead.build_BEV(image, curr_transform,
                 self.sensor, self.lidar_params, player_bbox)
         overhead_features = bevs
+
         datum = {}
         datum['overhead_features'] = overhead_features
         datum['player_future'] = np.zeros((20, 3,))
@@ -1010,7 +1015,7 @@ def game_loop(args):
                 break
 
             clock.tick_busy_loop(60)
-            world.world.tick() # synchronous
+            frame = world.world.tick() # synchronous
             hud.on_world_tick(
                 world.world.get_snapshot().timestamp)
             if controller.parse_events(client, world, clock):
