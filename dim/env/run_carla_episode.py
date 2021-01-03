@@ -285,7 +285,6 @@ def run_episode(client,
         #     if traffic_light.get_state() == carla.TrafficLightState.Red:
         #         traffic_light.set_state(carla.TrafficLightState.Green)
 
-
         log.debug("Upcoming traffic light is: '{}'.".format(traffic_light_state))
         current_obs.traffic_light_state = traffic_light_state
         current_obs.traffic_light_data = traffic_light_data

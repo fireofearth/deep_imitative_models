@@ -63,6 +63,10 @@ from pygame.locals import K_z
 from pygame.locals import K_MINUS
 from pygame.locals import K_EQUALS
 
+import generate.build_overhead as build_overhead
+import generate.util as util
+import precog.utils.class_util as classu
+
 # ==============================================================================
 # -- Find CARLA module ---------------------------------------------------------
 # ==============================================================================
@@ -104,6 +108,11 @@ def get_actor_display_name(actor, truncate=250):
     return (name[:truncate - 1] + u'\u2026') if len(name) > truncate else name
 
 
+class LidarParams:
+    @classu.member_initialize
+    def __init__(self, meters_max=50, pixels_per_meter=2, hist_max_per_pixel=25, val_obstacle=1.):
+        pass
+
 # ==============================================================================
 # -- World ---------------------------------------------------------------
 # ==============================================================================
@@ -127,6 +136,7 @@ class World(object):
         self.lane_invasion_sensor = None
         self.gnss_sensor = None
         self.camera_manager = None
+        self.lidar_manager = None # added
         self._weather_presets = find_weather_presets()
         self._weather_index = 0
         self._actor_filter = args.filter
@@ -176,6 +186,7 @@ class World(object):
         self.camera_manager = CameraManager(self.player, self.hud, self._gamma)
         self.camera_manager.transform_index = cam_pos_id
         self.camera_manager.set_sensor(cam_index, notify=False)
+        self.lidar_manager = LidarManager(self.player) # added
         actor_type = get_actor_display_name(self.player)
         self.hud.notification(actor_type)
 
@@ -198,6 +209,7 @@ class World(object):
 
     def destroy_sensors(self):
         """Destroy sensors"""
+        self.lidar_manager.sensor.destroy()
         self.camera_manager.sensor.destroy()
         self.camera_manager.sensor = None
         self.camera_manager.index = None
@@ -205,6 +217,7 @@ class World(object):
     def destroy(self):
         """Destroys all actors"""
         actors = [
+            self.lidar_manager.sensor,
             self.camera_manager.sensor,
             self.collision_sensor.sensor,
             self.lane_invasion_sensor.sensor,
@@ -586,6 +599,65 @@ class GnssSensor(object):
 # -- CameraManager -------------------------------------------------------------
 # ==============================================================================
 
+class LidarManager(object):
+
+    def __init__(self, parent_actor):
+        self.lidar_params = LidarParams()
+        self._parent = parent_actor
+        world = self._parent.get_world()
+        bp_library = world.get_blueprint_library()
+        """
+        sensor.lidar.ray_cast creates a carla.LidarMeasurement per step
+
+        attributes for sensor.lidar.ray_cast
+        https://carla.readthedocs.io/en/latest/ref_sensors/#lidar-sensor
+
+        doc for carla.SensorData
+        https://carla.readthedocs.io/en/latest/python_api/#carla.SensorData
+
+        doc for carla.LidarMeasurement
+        https://carla.readthedocs.io/en/latest/python_api/#carla.LidarMeasurement
+        """
+        self.lidar_bp = bp_library.find('sensor.lidar.ray_cast')
+        self.lidar_bp.set_attribute('channels', '32')
+        self.lidar_bp.set_attribute('range', '50')
+        self.lidar_bp.set_attribute('points_per_second', '100000')
+        self.lidar_bp.set_attribute('rotation_frequency', '10.0')
+        self.lidar_bp.set_attribute('upper_fov', '10.0')
+        self.lidar_bp.set_attribute('lower_fov', '-30.0')
+        self._camera_transforms = (
+                carla.Transform(carla.Location(z=2.5)),
+                    # carla.Rotation(pitch=0.0)),
+                carla.AttachmentType.Rigid)
+        self.sensor = world.spawn_actor(
+                self.lidar_bp,
+                self._camera_transforms[0],
+                attach_to=self._parent,
+                attachment_type=self._camera_transforms[1])
+        
+        # We need to pass the lambda a weak reference to
+        # self to avoid circular reference.
+        weak_self = weakref.ref(self)
+        self.sensor.listen(lambda image: LidarManager._parse_image(weak_self, image))
+
+    @staticmethod
+    def _parse_image(weak_self, image):
+        self = weak_self()
+        if not self:
+            return
+        print("in LidarManager._parse_image")
+        player_transform = self._parent.get_transform()
+        bevs = build_overhead.build_BEV(image, player_transform,
+                self.sensor, self.lidar_params)
+        overhead_features = bevs
+        datum = {}
+        datum['overhead_features'] = overhead_features
+        datum['player_future'] = np.zeros((20, 3,))
+        datum['agent_futures'] = np.zeros((4, 20, 3,))
+        datum['player_past'] = np.zeros((10, 3,))
+        datum['agent_pasts'] = np.zeros((4, 10, 3,))
+        util.save_datum(datum, "out", "{:08d}".format(image.frame))
+
 
 class CameraManager(object):
     """ Class for camera management"""
@@ -619,6 +691,8 @@ class CameraManager(object):
             ['sensor.camera.semantic_segmentation', cc.Raw, 'Camera Semantic Segmentation (Raw)'],
             ['sensor.camera.semantic_segmentation', cc.CityScapesPalette,
              'Camera Semantic Segmentation (CityScapes Palette)'],
+             # using this in open3d_lidar.py
+             # index 6 of sensors
             ['sensor.lidar.ray_cast', None, 'Lidar (Ray-Cast)']]
         world = self._parent.get_world()
         bp_library = world.get_blueprint_library()
@@ -875,6 +949,7 @@ def game_loop(args):
 
     pygame.init()
     pygame.font.init()
+    vehicles_list = None
     world = None
     original_settings = None
     tot_target_reached = 0
@@ -931,7 +1006,12 @@ def game_loop(args):
 
         clock = pygame.time.Clock()
 
+        iter = 0
         while True:
+            iter += 1
+            if iter > 50:
+                break
+
             clock.tick_busy_loop(60)
             world.world.tick() # synchronous
             hud.on_world_tick(
