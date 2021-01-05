@@ -63,10 +63,6 @@ from pygame.locals import K_z
 from pygame.locals import K_MINUS
 from pygame.locals import K_EQUALS
 
-import generate.overhead as generate_overhead
-import generate.trajectory as generate_trajectory
-import generate.util as util
-import precog.utils.class_util as classu
 
 # ==============================================================================
 # -- Find CARLA module ---------------------------------------------------------
@@ -89,6 +85,7 @@ from agents.navigation.behavior_agent import BehaviorAgent  # pylint: disable=im
 from agents.navigation.roaming_agent import RoamingAgent  # pylint: disable=import-error
 from agents.navigation.basic_agent import BasicAgent  # pylint: disable=import-error
 
+from generate.data import DataCollector
 
 # ==============================================================================
 # -- Global functions ----------------------------------------------------------
@@ -108,11 +105,6 @@ def get_actor_display_name(actor, truncate=250):
     name = ' '.join(actor.type_id.replace('_', '.').title().split('.')[1:])
     return (name[:truncate - 1] + u'\u2026') if len(name) > truncate else name
 
-
-class LidarParams:
-    @classu.member_initialize
-    def __init__(self, meters_max=50, pixels_per_meter=2, hist_max_per_pixel=25, val_obstacle=1.):
-        pass
 
 # ==============================================================================
 # -- World ---------------------------------------------------------------
@@ -137,7 +129,7 @@ class World(object):
         self.lane_invasion_sensor = None
         self.gnss_sensor = None
         self.camera_manager = None
-        self.lidar_manager = None # added
+        self.data_collector = None # added
         self._weather_presets = find_weather_presets()
         self._weather_index = 0
         self._actor_filter = args.filter
@@ -150,8 +142,10 @@ class World(object):
     def restart(self, args):
         """Restart the world"""
         # Keep same camera config if the camera manager exists.
-        cam_index = self.camera_manager.index if self.camera_manager is not None else 0
-        cam_pos_id = self.camera_manager.transform_index if self.camera_manager is not None else 0
+        cam_index = self.camera_manager.index \
+                if self.camera_manager is not None else 0
+        cam_pos_id = self.camera_manager.transform_index \
+                if self.camera_manager is not None else 0
         # Set the seed if requested by user
         if args.seed is not None:
             random.seed(args.seed)
@@ -187,7 +181,7 @@ class World(object):
         self.camera_manager = CameraManager(self.player, self.hud, self._gamma)
         self.camera_manager.transform_index = cam_pos_id
         self.camera_manager.set_sensor(cam_index, notify=False)
-        self.lidar_manager = LidarManager(self.player) # added
+        self.data_collector = DataCollector(self.player) # added
         actor_type = get_actor_display_name(self.player)
         self.hud.notification(actor_type)
 
@@ -210,7 +204,7 @@ class World(object):
 
     def destroy_sensors(self):
         """Destroy sensors"""
-        self.lidar_manager.sensor.destroy()
+        self.data_collector.sensor.destroy()
         self.camera_manager.sensor.destroy()
         self.camera_manager.sensor = None
         self.camera_manager.index = None
@@ -218,7 +212,7 @@ class World(object):
     def destroy(self):
         """Destroys all actors"""
         actors = [
-            self.lidar_manager.sensor,
+            self.data_collector.sensor,
             self.camera_manager.sensor,
             self.collision_sensor.sensor,
             self.lane_invasion_sensor.sensor,
@@ -600,67 +594,6 @@ class GnssSensor(object):
 # -- CameraManager -------------------------------------------------------------
 # ==============================================================================
 
-class LidarManager(object):
-
-    def __init__(self, player_actor):
-        self.lidar_params = LidarParams()
-        self._player = player_actor
-        world = self._player.get_world()
-        bp_library = world.get_blueprint_library()
-        """
-        sensor.lidar.ray_cast creates a carla.LidarMeasurement per step
-
-        attributes for sensor.lidar.ray_cast
-        https://carla.readthedocs.io/en/latest/ref_sensors/#lidar-sensor
-
-        doc for carla.SensorData
-        https://carla.readthedocs.io/en/latest/python_api/#carla.SensorData
-
-        doc for carla.LidarMeasurement
-        https://carla.readthedocs.io/en/latest/python_api/#carla.LidarMeasurement
-        """
-        self.lidar_bp = bp_library.find('sensor.lidar.ray_cast')
-        self.lidar_bp.set_attribute('channels', '32')
-        self.lidar_bp.set_attribute('range', '50')
-        self.lidar_bp.set_attribute('points_per_second', '100000')
-        self.lidar_bp.set_attribute('rotation_frequency', '10.0')
-        self.lidar_bp.set_attribute('upper_fov', '10.0')
-        self.lidar_bp.set_attribute('lower_fov', '-30.0')
-        self.sensor = world.spawn_actor(
-                self.lidar_bp,
-                carla.Transform(carla.Location(z=2.5)),
-                attach_to=self._player,
-                attachment_type=carla.AttachmentType.Rigid)
-        # We need to pass the lambda a weak reference to
-        # self to avoid circular reference.
-        weak_self = weakref.ref(self)
-        self.sensor.listen(lambda image: LidarManager._parse_image(weak_self, image))
-
-    @staticmethod
-    def _parse_image(weak_self, image):
-        self = weak_self()
-        if not self:
-            return
-        print("in LidarManager._parse_image")
-        curr_transform = self._player.get_transform()
-        # generate trajectory
-        image.frame
-
-        # generate overhead features
-        player_bbox = self._player.bounding_box
-        bevs = generate_overhead.build_BEV(image, curr_transform,
-                self.sensor, self.lidar_params, player_bbox)
-        overhead_features = bevs
-
-        datum = {}
-        datum['overhead_features'] = overhead_features
-        datum['player_future'] = np.zeros((20, 3,))
-        datum['agent_futures'] = np.zeros((4, 20, 3,))
-        datum['player_past'] = np.zeros((10, 3,))
-        datum['agent_pasts'] = np.zeros((4, 10, 3,))
-        util.save_datum(datum, "out", "{:08d}".format(image.frame))
-
-
 class CameraManager(object):
     """ Class for camera management"""
 
@@ -967,7 +900,7 @@ def game_loop(args):
 
         hud = HUD(args.width, args.height)
         world = World(client.get_world(), hud, args)
-        # make synchronous and disable keyboard controller BEGIN
+        # make synchronous and create NPCs BEGIN
         logging.info("make synchronous and disable keyboard controller")
         original_settings = world.world.get_settings()
         settings = world.world.get_settings()
@@ -981,6 +914,7 @@ def game_loop(args):
         world.world.apply_settings(settings)
 
         vehicles_list, all_actors, all_id, walkers_list = create_npcs(client, args)
+        world.data_collector.set_vehicles(vehicles_list)
         # END
         controller = KeyboardControl(world)
 
@@ -1008,14 +942,21 @@ def game_loop(args):
 
         clock = pygame.time.Clock()
 
+        #  BEGIN
+        world.world.tick()
+        world.data_collector.start_sensor()
+        # END
+
         iter = 0
         while True:
             iter += 1
-            if iter > 50:
+            if iter > 80:
                 break
 
             clock.tick_busy_loop(60)
             frame = world.world.tick() # synchronous
+            world.data_collector.capture_step(frame)
+
             hud.on_world_tick(
                 world.world.get_snapshot().timestamp)
             if controller.parse_events(client, world, clock):
