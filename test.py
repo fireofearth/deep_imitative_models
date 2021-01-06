@@ -907,7 +907,8 @@ def game_loop(args):
         traffic_manager = client.get_trafficmanager(8000)
         traffic_manager.set_synchronous_mode(True)
 
-        delta = 0.06
+        delta = 0.1
+
 
         settings.fixed_delta_seconds = delta
         settings.synchronous_mode = True
@@ -942,18 +943,15 @@ def game_loop(args):
 
         clock = pygame.time.Clock()
 
-        #  BEGIN
+        # starting sensor BEGIN
+        logging.info("starting sensor")
         world.world.tick()
         world.data_collector.start_sensor()
         # END
 
-        iter = 0
         while True:
-            iter += 1
-            if iter > 80:
-                break
 
-            clock.tick_busy_loop(60)
+            clock.tick_busy_loop(int(delta * 1000))
             frame = world.world.tick() # synchronous
             world.data_collector.capture_step(frame)
 
@@ -1004,6 +1002,9 @@ def game_loop(args):
                 world.player.apply_control(control)
 
     finally:
+        if world is not None:
+            world.data_collector.stop_sensor()
+            
         if vehicles_list is not None:
             print('\ndestroying %d vehicles' % len(vehicles_list))
             client.apply_batch([carla.command.DestroyActor(x) for x in vehicles_list])

@@ -20,8 +20,6 @@ def transform_points(transform, points):
 def mult_matrices(mat_a, mat_b):
     return np.dot(mat_a, mat_b)
 
-
-
 def splat_points(points, splat_params, nd=2):
     meters_max = splat_params.meters_max
     pixels_per_meter = splat_params.pixels_per_meter
