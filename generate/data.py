@@ -43,6 +43,41 @@ def create_phi(settings):
             agent_presence=agent_presence,
             light_strings=light_strings)
 
+def create_lidar_blueprint(world):
+    bp_library = world.get_blueprint_library()
+    """
+    sensor.lidar.ray_cast creates a carla.LidarMeasurement per step
+
+    attributes for sensor.lidar.ray_cast
+    https://carla.readthedocs.io/en/latest/ref_sensors/#lidar-sensor
+
+    doc for carla.SensorData
+    https://carla.readthedocs.io/en/latest/python_api/#carla.SensorData
+
+    doc for carla.LidarMeasurement
+    https://carla.readthedocs.io/en/latest/python_api/#carla.LidarMeasurement
+    """
+    lidar_bp = bp_library.find('sensor.lidar.ray_cast')
+    lidar_bp.set_attribute('channels', '32')
+    lidar_bp.set_attribute('range', '50')
+    lidar_bp.set_attribute('points_per_second', '100000')
+    lidar_bp.set_attribute('rotation_frequency', '10.0')
+    lidar_bp.set_attribute('upper_fov', '10.0')
+    lidar_bp.set_attribute('lower_fov', '-30.0')
+    return lidar_bp
+
+def create_lidar_blueprint_v2(world):
+    bp_library = world.get_blueprint_library()
+    lidar_bp = bp_library.find('sensor.lidar.ray_cast')
+    lidar_bp.set_attribute('channels', '48')
+    lidar_bp.set_attribute('range', '70')
+    lidar_bp.set_attribute('dropoff_general_rate', '0.25')
+    lidar_bp.set_attribute('points_per_second', '100000')
+    lidar_bp.set_attribute('rotation_frequency', '10.0')
+    lidar_bp.set_attribute('upper_fov', '30.0')
+    lidar_bp.set_attribute('lower_fov', '-30.0')
+    return lidar_bp
+
 class DataCollector(object):
     """Data collector based on DIM."""
 
@@ -69,30 +104,10 @@ class DataCollector(object):
         self.trajectory_feeds = collections.OrderedDict()
         self.lidar_feeds = collections.OrderedDict()
         self.n_feeds = self.T + self.T_past + 10
-        self.save_frequency = 10
+        self.save_frequency = 3
         self.streaming_generator = generate_observation.StreamingGenerator(self._phi)
-        bp_library = self._world.get_blueprint_library()
-        """
-        sensor.lidar.ray_cast creates a carla.LidarMeasurement per step
-
-        attributes for sensor.lidar.ray_cast
-        https://carla.readthedocs.io/en/latest/ref_sensors/#lidar-sensor
-
-        doc for carla.SensorData
-        https://carla.readthedocs.io/en/latest/python_api/#carla.SensorData
-
-        doc for carla.LidarMeasurement
-        https://carla.readthedocs.io/en/latest/python_api/#carla.LidarMeasurement
-        """
-        self.lidar_bp = bp_library.find('sensor.lidar.ray_cast')
-        self.lidar_bp.set_attribute('channels', '32')
-        self.lidar_bp.set_attribute('range', '50')
-        self.lidar_bp.set_attribute('points_per_second', '100000')
-        self.lidar_bp.set_attribute('rotation_frequency', '10.0')
-        self.lidar_bp.set_attribute('upper_fov', '10.0')
-        self.lidar_bp.set_attribute('lower_fov', '-30.0')
         self.sensor = self._world.spawn_actor(
-                self.lidar_bp,
+                create_lidar_blueprint_v2(self._world),
                 carla.Transform(carla.Location(z=2.5)),
                 attach_to=self._player,
                 attachment_type=carla.AttachmentType.Rigid)
@@ -134,6 +149,10 @@ class DataCollector(object):
 
     def capture_step(self, frame):
         print("in LidarManager.capture_step frame =", frame)
+        # print("sensor rotation",
+        #     self.sensor.get_transform().rotation)
+        # print("player rotation",
+        #     self._player.get_transform().rotation)
         self._update_transforms()
         if len(self.player_transforms) >= self.T_past:
             """Only save trajectory feeds when we have collected at
@@ -152,7 +171,6 @@ class DataCollector(object):
                         frame, observation, self.trajectory_feeds,
                         self.lidar_feeds)
                 # debug
-                # raise Exception("DEBUG")
                 self.counter += 1
                 if self.counter >= 15:
                     raise Exception("DEBUG")
@@ -177,10 +195,3 @@ class DataCollector(object):
                 self.sensor, self.lidar_params, player_bbox)
         assert(tensoru.shape(overhead_features) == (self.H, self.W, self.C,))
         self.lidar_feeds[image.frame] = overhead_features
-        # datum = {}
-        # datum['overhead_features'] = overhead_features
-        # datum['player_future'] = np.zeros((20, 3,))
-        # datum['agent_futures'] = np.zeros((4, 20, 3,))
-        # datum['player_past'] = np.zeros((10, 3,))
-        # datum['agent_pasts'] = np.zeros((4, 10, 3,))
-        # util.save_datum(datum, "out", "{:08d}".format(image.frame))

@@ -172,15 +172,12 @@ class StreamingGenerator(object):
         joint_past_local = np.squeeze(feed_dict[self.phi.S_past_world_frame])
         player_past = joint_past_local[0]
         agent_pasts = joint_past_local[1:self.A]
-
-        transform_to_player_origin = lambda ps: util.transform_points(
-                # player_transform.get_inverse_matrix(), ps)
-                player_transform.get_matrix(), ps)
-        player_future = transform_to_player_origin(
-                observation.player_positions_world[1:self.T+1, :3])
+        
+        player_future = observation.player_positions_world[1:self.T+1, :3] \
+                - util.transform_to_location_ndarray(player_transform)
         player_future = player_future[:, :2]
-        agent_futures = np.array([transform_to_player_origin(ps)
-                for ps in observation.agent_positions_world[:, 1:self.T+1, :3]])
+        agent_futures = observation.agent_positions_world[:, 1:self.T+1, :3] \
+                - util.transform_to_location_ndarray(player_transform)
         agent_futures = agent_futures[:, :, :2]
 
         datum['player_past'] = player_past

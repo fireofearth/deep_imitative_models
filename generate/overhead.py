@@ -1,5 +1,6 @@
 import numpy as np
 import carla
+import generate.util as util
 
 def transform_points(transform, points):
     """
@@ -10,7 +11,8 @@ def transform_points(transform, points):
     # the point matrix.
     points = points.transpose()
     # Add 0s row: [[X0..,Xn],[Y0..,Yn],[Z0..,Zn],[0,..0]]
-    points = np.append(points, np.ones((1, points.shape[1])), axis=0)
+    # points = np.append(points, np.ones((1, points.shape[1])), axis=0)
+    points = np.append(points, np.zeros((1, points.shape[1])), axis=0)
     # Point transformation
     # points = transform * points
     points = np.dot(transform, points)
@@ -60,6 +62,7 @@ def get_rectifying_player_transform(lidar_sensor, player_transform):
     """
     rotation = carla.Rotation(
             pitch=-player_transform.rotation.pitch,
+            yaw=-player_transform.rotation.yaw,
             roll=-player_transform.rotation.roll)
     translation = carla.Location(z=2.5)
     return carla.Transform(translation, rotation)
@@ -84,10 +87,15 @@ def get_rectified_sensor_data(lidar_sensor, lidar_measurement, player_transform)
             lidar_sensor, player_transform)
     rectified_mat = rectified_transform.get_matrix()
     lidar_points_at_car = transform_points(rectified_mat, lidar_point_cloud)
-    permute = np.array([[1, 0, 0],
-                        [0, -1, 0],
-                        [0, 0, 1]], dtype=np.float32)
-    return (permute @ lidar_points_at_car.T).T
+    # doesn't work
+    # lidar_points_at_car = lidar_point_cloud \
+    #         - util.transform_to_location_ndarray(
+    #             carla.Transform(carla.Location(z=2.5), carla.Rotation()))
+    # permute = np.array([[1, 0, 0],
+    #                     [0, -1, 0],
+    #                     [0, 0, 1]], dtype=np.float32)
+    # return (permute @ lidar_points_at_car.T).T
+    return lidar_points_at_car
 
 def get_occupancy_grid(points, lidar_params, player_bbox):
     """
