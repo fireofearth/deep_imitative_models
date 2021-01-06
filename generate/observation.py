@@ -3,24 +3,12 @@ import pandas as pd
 import carla
 
 import generate.util as util
+import generate.overhead as generate_overhead
 import precog.utils.class_util as classu
 import precog.utils.tensor_util as tensoru
 import precog.utils.tfutil as tfutil
 
 class PlayerObservation(object):
-
-    def transform_to_player_origin(self, transform):
-        """Transform vehicle trajectories to player origin
-
-        Parameters
-        ----------
-        transform : carla.Transform
-
-        Returns
-        -------
-        carla.Transform
-        """
-        return util.transform_to_origin(transform, self.player_transform)
 
     def get_nearby_agent_ids(self, radius=None):
         """Gets all IDs of other vehicles that are radius away from ego vehicle and
@@ -81,15 +69,12 @@ class PlayerObservation(object):
         # player_positions_local : ndarray of shape (len(player_transforms), 3)
         self.player_positions_local = self.player_positions_world \
                 - util.transform_to_location_ndarray(self.player_transform)
-        # print("player_positions_world.shape", self.player_positions_world.shape)
-        # print("player_positions_local.shape", self.player_positions_local.shape)
 
         if self.other_id_ordering is None:
             # get list of A agents within radius close to us
             # note that other_id_ordering may have size smaller than A-1
             ids = self.get_nearby_agent_ids()
             self.other_id_ordering = ids[:self.A - 1]
-        # print("other_id_ordering", self.other_id_ordering)
 
         others_transforms_list = [None] * len(self.others_transforms)
         for idx, others_transform in enumerate(self.others_transforms):
@@ -99,7 +84,6 @@ class PlayerObservation(object):
 
         # agent_positions_world : ndarray of shape (A-1, len(self.others_transforms), 3)
         self.agent_positions_world = np.array(others_transforms_list).transpose(1, 0, 2)
-        # print("agent_positions_world.shape", self.agent_positions_world.shape)
         self.n_missing = max(self.A - 1 - self.agent_positions_world.shape[0], 0)
         if self.n_missing > 0:
             faraway = util.transform_to_location_ndarray(self.player_transform) + 500
@@ -113,7 +97,6 @@ class PlayerObservation(object):
         # agent_positions_local : ndarray of shape (A-1, len(self.others_transforms), 3)
         self.agent_positions_local = self.agent_positions_world \
                 - util.transform_to_location_ndarray(self.player_transform)
-        # print("agent_positions_local.shape", self.agent_positions_local.shape)
 
     def copy_with_new_ordering(self, other_id_ordering):
         return PlayerObservation(self.frame, self.phi, self.world,
@@ -161,13 +144,18 @@ class StreamingGenerator(object):
                 feed_dict)
 
     def save_dataset_sample(self, frame, observation,
-            trajectory_feeds, lidar_feeds):
+            trajectory_feeds, lidar_feeds, player_bbox,
+            lidar_sensor, lidar_params):
         earlier_frame = frame - self.T
         datum = {}
         player_transform, other_id_ordering, \
                 feed_dict = trajectory_feeds[earlier_frame]
         observation = observation.copy_with_new_ordering(other_id_ordering)
-        overhead_features = lidar_feeds[earlier_frame]
+        raw_data = lidar_feeds[earlier_frame]
+
+        overhead_features = generate_overhead.build_BEV(
+            raw_data, lidar_params, player_bbox)
+        assert(tensoru.shape(overhead_features) == (self.H, self.W, self.C,))
 
         joint_past_local = np.squeeze(feed_dict[self.phi.S_past_world_frame])
         player_past = joint_past_local[0]
@@ -185,5 +173,5 @@ class StreamingGenerator(object):
         datum['overhead_features'] = overhead_features
         datum['player_future'] = player_future
         datum['agent_futures'] = agent_futures
-        util.save_datum(datum, "out", "{:08d}".format(frame))
+        util.save_datum(datum, "out", "{:08d}".format(earlier_frame))
         

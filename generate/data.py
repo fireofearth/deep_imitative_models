@@ -67,6 +67,8 @@ def create_lidar_blueprint(world):
     return lidar_bp
 
 def create_lidar_blueprint_v2(world):
+    """Construct a stronger LIDAR sensor blueprint
+    """
     bp_library = world.get_blueprint_library()
     lidar_bp = bp_library.find('sensor.lidar.ray_cast')
     lidar_bp.set_attribute('channels', '48')
@@ -104,8 +106,9 @@ class DataCollector(object):
         self.trajectory_feeds = collections.OrderedDict()
         self.lidar_feeds = collections.OrderedDict()
         self.n_feeds = self.T + self.T_past + 10
-        self.save_frequency = 3
-        self.streaming_generator = generate_observation.StreamingGenerator(self._phi)
+        self.save_frequency = 10
+        self.streaming_generator = generate_observation.StreamingGenerator(
+                self._phi)
         self.sensor = self._world.spawn_actor(
                 create_lidar_blueprint_v2(self._world),
                 carla.Transform(carla.Location(z=2.5)),
@@ -149,10 +152,10 @@ class DataCollector(object):
 
     def capture_step(self, frame):
         print("in LidarManager.capture_step frame =", frame)
-        # print("sensor rotation",
-        #     self.sensor.get_transform().rotation)
-        # print("player rotation",
-        #     self._player.get_transform().rotation)
+        print("sensor rotation",
+            self.sensor.get_transform().rotation)
+        print("player rotation",
+            self._player.get_transform().rotation)
         self._update_transforms()
         if len(self.player_transforms) >= self.T_past:
             """Only save trajectory feeds when we have collected at
@@ -169,7 +172,8 @@ class DataCollector(object):
                 print("saving dataset sample")
                 self.streaming_generator.save_dataset_sample(
                         frame, observation, self.trajectory_feeds,
-                        self.lidar_feeds)
+                        self.lidar_feeds, self._player.bounding_box,
+                        self.sensor, self.lidar_params)
                 # debug
                 self.counter += 1
                 if self.counter >= 15:
@@ -188,10 +192,4 @@ class DataCollector(object):
         if not self:
             return
         print("in LidarManager._parse_image frame =", image.frame)
-        # generate overhead features
-        curr_transform = self._player.get_transform()
-        player_bbox = self._player.bounding_box
-        overhead_features = generate_overhead.build_BEV(image, curr_transform,
-                self.sensor, self.lidar_params, player_bbox)
-        assert(tensoru.shape(overhead_features) == (self.H, self.W, self.C,))
-        self.lidar_feeds[image.frame] = overhead_features
+        self.lidar_feeds[image.frame] = image

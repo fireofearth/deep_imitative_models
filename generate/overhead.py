@@ -2,26 +2,6 @@ import numpy as np
 import carla
 import generate.util as util
 
-def transform_points(transform, points):
-    """
-    Given a 4x4 transformation matrix, transform an array of 3D points.
-    Expected point foramt: [[X0,Y0,Z0],..[Xn,Yn,Zn]]
-    """
-    # Needed format: [[X0,..Xn],[Z0,..Zn],[Z0,..Zn]]. So let's transpose
-    # the point matrix.
-    points = points.transpose()
-    # Add 0s row: [[X0..,Xn],[Y0..,Yn],[Z0..,Zn],[0,..0]]
-    # points = np.append(points, np.ones((1, points.shape[1])), axis=0)
-    points = np.append(points, np.zeros((1, points.shape[1])), axis=0)
-    # Point transformation
-    # points = transform * points
-    points = np.dot(transform, points)
-    # Return all but last row
-    return points[0:3].transpose()
-
-def mult_matrices(mat_a, mat_b):
-    return np.dot(mat_a, mat_b)
-
 def splat_points(points, splat_params, nd=2):
     meters_max = splat_params.meters_max
     pixels_per_meter = splat_params.pixels_per_meter
@@ -48,54 +28,47 @@ def splat_points(points, splat_params, nd=2):
     return overhead_splat
 
 
-def get_rectifying_player_transform(lidar_sensor, player_transform):
-    """
-    based on carla_preprocess.get_rectifying_player_transform
+def get_rectified_sensor_data(lidar_measurement):
+    """Obtain LIDAR point cloud with rotation oriented to
+    world frame of reference, and centered at (0, 0, 0). 
 
+    First convert to world orientation which keeping the origin
+    using lidar_measurement.transform, mentioned in:
+    https://github.com/carla-simulator/carla/issues/2817
+
+    Rotate points 90 degrees CCW around origin (why?).
+
+    Adjust points 2.5 meters in the z direction to reflect
+    how the sensor is placed with resp. to the ego vehicle.
+
+    Lastly reflect the y-axis, mentioned in:
+    https://github.com/carla-simulator/carla/issues/2699
+    
     Parameters
     ----------
-    carla.Transform : player's location and rotation
+    lidar_measurement : carla.LidarMeasurement
 
     Returns
     -------
-    carla.Transform : player's transform normalized to no rotation 
-    """
-    rotation = carla.Rotation(
-            pitch=-player_transform.rotation.pitch,
-            yaw=-player_transform.rotation.yaw,
-            roll=-player_transform.rotation.roll)
-    translation = carla.Location(z=2.5)
-    return carla.Transform(translation, rotation)
-
-
-def get_rectified_sensor_data(lidar_sensor, lidar_measurement, player_transform):
-    """
-    based on carla_preprocess.splat_lidar and
-    https://carla.readthedocs.io/en/latest/tuto_G_retrieve_data/#lidar-raycast-sensor
-
-    Parameters
-    ----------
-    lidar_sensor : carla.Sensor - a sensor from blueprint sensor.lidar.ray_cast
-    lidar_measurement : carla.LidarMeasurement
-    player_transform : carla.Transform
+    np.array of shape (points, 3)
     """
     raw_data = lidar_measurement.raw_data
-    raw_data = np.frombuffer(raw_data, dtype=np.dtype('f4'))
-    raw_data = np.reshape(raw_data, (int(raw_data.shape[0] / 4), 4))
-    lidar_point_cloud = raw_data[:, :3]
-    rectified_transform = get_rectifying_player_transform(
-            lidar_sensor, player_transform)
-    rectified_mat = rectified_transform.get_matrix()
-    lidar_points_at_car = transform_points(rectified_mat, lidar_point_cloud)
-    # doesn't work
-    # lidar_points_at_car = lidar_point_cloud \
-    #         - util.transform_to_location_ndarray(
-    #             carla.Transform(carla.Location(z=2.5), carla.Rotation()))
-    # permute = np.array([[1, 0, 0],
-    #                     [0, -1, 0],
-    #                     [0, 0, 1]], dtype=np.float32)
-    # return (permute @ lidar_points_at_car.T).T
-    return lidar_points_at_car
+    points = np.frombuffer(raw_data, dtype=np.dtype('f4'))
+    points = np.reshape(points, (int(points.shape[0] / 4), 4))
+    transform_to_world = carla.Transform(
+            carla.Location(),
+            lidar_measurement.transform.rotation)
+    transform_ccw = carla.Transform(
+            carla.Location(),
+            carla.Rotation(yaw=-90.))
+    matrix = np.array(transform_to_world.get_matrix())
+    points = np.dot(matrix, points.T).T
+    matrix = np.array(transform_ccw.get_matrix())
+    points = np.dot(matrix, points.T).T
+    points = points[:, :3] \
+        + util.location_to_ndarray(carla.Location(z=2.5))
+    points[:, 1] *= -1.0 
+    return points
 
 def get_occupancy_grid(points, lidar_params, player_bbox):
     """
@@ -135,19 +108,17 @@ def get_occupancy_grid(points, lidar_params, player_bbox):
     return np.stack(feats, axis=-1)
 
 
-def build_BEV(lidar_measurement, player_transform, lidar_sensor, lidar_params, player_bbox):
+def build_BEV(lidar_measurement, lidar_params, player_bbox):
     """
     based on carla_preprocess.build_BEV
 
     Parameters
     ----------
     lidar_measurement : carla.LidarMeasurement
-    player_transform : carla.Transform
-    lidar_sensor : carla.Sensor - a sensor from blueprint sensor.lidar.ray_cast
     lidar_params : LidarParams
+    player_bbox : carla.BoundingBox
     """
-    lidar_points_at_car = get_rectified_sensor_data(lidar_sensor,
-            lidar_measurement, player_transform)
+    lidar_points_at_car = get_rectified_sensor_data(lidar_measurement)
     overhead_lidar = splat_points(lidar_points_at_car, lidar_params)
     overhead_lidar_features = overhead_lidar[..., None]
     ogrid = get_occupancy_grid(lidar_points_at_car, lidar_params, player_bbox)

@@ -173,13 +173,7 @@ class World(object):
                 sys.exit(1)
             spawn_points = self.map.get_spawn_points()
             spawn_point = random.choice(spawn_points) if spawn_points else carla.Transform()
-            # debug
-            spawn_point = carla.Transform(
-                    carla.Location(x=190.0, y=293.54, z=0.5),
-                    carla.Rotation(pitch=0.0, yaw=90.0, roll=0.0))
-            # end
             self.player = self.world.try_spawn_actor(blueprint, spawn_point)
-        print("spawn_point", spawn_point)
         # Set up the sensors.
         self.collision_sensor = CollisionSensor(self.player, self.hud)
         self.lane_invasion_sensor = LaneInvasionSensor(self.player, self.hud)
